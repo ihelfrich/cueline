@@ -85,19 +85,54 @@ reflects what you will actually say out loud.
 | `M` | mirror (for teleprompter glass) |
 | `F` | full screen |
 | `+` `−` | text size |
+| `Esc` | close a dialog, or the floating window |
 
 Keys work when the prompter window or the main page has focus. While Zoom has
 focus, use the buttons on the floating window, or let voice follow drive it.
 
 ## Voice follow
 
-Turn it on in Settings. Cueline aligns the tail of what it hears against the next
-stretch of script and eases the scroll to match, so it tracks you rather than
-jumping. Going off script does nothing until you come back to it.
+Turn it on in Settings and **Start** becomes **Listen**. The reader drives the
+script instead of a clock: speak, and the line you are saying stays on the
+reading line. Pause and it waits. Take a question and it waits. Come back to the
+script and it picks you up again.
+
+Speech recognition gives a noisy, laggy, partly-wrong stream of words, so three
+things sit between it and the scroll:
+
+**Predict and correct.** Confirmations arrive in bursts a second or two apart.
+Moving only on confirmation gives a stop-start crawl that is horrible to read
+against, so between confirmations Cueline keeps gliding at the pace it measured
+from your last few, and each new match is a small correction rather than a jump.
+Continuous motion, periodic accuracy.
+
+**Lock states and re-acquisition.** When it can no longer place what it is
+hearing it says so, stops moving rather than guessing, and widens its search —
+first a few sentences, then a few paragraphs, then the whole script. A tracker
+that only ever looks just ahead of itself strands you the moment you ad-lib.
+
+**Asymmetric trust.** Moving forward on a decent match is cheap to recover from.
+Moving backward is not — a repeated phrase throwing you into text you already
+read is the thing that makes people abandon voice prompters. Backward jumps
+therefore need a near-perfect match.
+
+Set your spoken language in Settings; accuracy falls off badly on the wrong one.
 
 - Chromium browsers only (Chrome, Edge, Arc, Brave).
 - Speech goes to your browser's recognition service, so **leave it off for
   confidential material.** Everything else in Cueline is local.
+
+## Tests
+
+```bash
+node test/engine.test.js
+```
+
+The app is three browser files with no build step, so the tests lift the real
+function bodies out of `app.js` and exercise those rather than a re-implementation
+— if a function is renamed the extraction fails, which is itself useful. They
+cover the parser, the words-per-minute timing identity, and the voice tracker
+(including re-acquisition and the backward-jump guard).
 
 ## Browser support
 
@@ -123,6 +158,32 @@ git clone https://github.com/ihelfrich/cueline.git && cd cueline && python3 -m h
 
 Then open `http://localhost:8777`. Deploying it anywhere means copying the files
 onto any static host.
+
+## Design
+
+The reference is a broadcast prompter console rather than an application, and
+two rules do most of the work.
+
+**Saturation means live.** The interface is neutral monochrome. Amber appears
+only when the prompter is armed or rolling — the play control, the reading
+marks, the progress fill; red exists only as the voice tally lamp. Nothing that
+is merely *available* is ever coloured. That is what leaves the reading line as
+the most conspicuous thing on screen rather than one of a dozen competing
+accents, and it is why the pace readout is an exposure meter — direction by
+which side of centre, magnitude by length — instead of a green/amber/red pill.
+
+**Structure is drawn with hairlines.** Square panels, 1px rules, a 4px rhythm,
+tabular figures, and instrument labelling: a small tracked field name above a
+large value. No card shadows, no gradients, no glass, no pills.
+
+On the reading surface itself: the measure is capped at 17em so a line is five
+or six words wide however large the window, because a long line forces the eye
+to sweep back and re-find its place. Type auto-fits the window height, holding
+roughly six visible lines from a 900px window down to 140px. Already-said text
+is dimmed by a mask in viewport space, so the boundary falls exactly on the
+reading line — to the pixel, mid-word — and costs nothing per frame. The
+full-brightness band is a plateau more than two line-heights tall rather than a
+peak at one gradient stop, so the line you are reading is never half-faded.
 
 ## Privacy
 

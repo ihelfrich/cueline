@@ -3,64 +3,57 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Cueline — a teleprompter that floats over Zoom</title>
+    <title>Cueline — teleprompter</title>
     <meta
       name="description"
-      content="A free browser teleprompter that floats above Zoom in an always-on-top window. Word-per-minute pacing, voice following, and it stays out of your screen share."
+      content="A teleprompter that floats above Zoom in an always-on-top window. Words-per-minute pacing, live drift against a target length, and voice following."
     />
     <link rel="stylesheet" href="app.css" />
     <link
       rel="icon"
-      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230d0f13'/%3E%3Crect x='7' y='9' width='18' height='3' rx='1.5' fill='%234fd6a0'/%3E%3Crect x='7' y='15' width='13' height='3' rx='1.5' fill='%23f4f6fa' opacity='.75'/%3E%3Crect x='7' y='21' width='16' height='3' rx='1.5' fill='%23f4f6fa' opacity='.35'/%3E%3C/svg%3E"
+      href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Crect x='6' y='10' width='20' height='2' fill='%23efeeec'/%3E%3Crect x='6' y='15' width='20' height='2' fill='%23e9a33c'/%3E%3Crect x='6' y='20' width='13' height='2' fill='%23656563'/%3E%3C/svg%3E"
     />
   </head>
   <body>
-    <!-- ============================================================ app -->
     <div id="app" class="app">
+      <!-- ======================================================== topbar -->
       <header class="topbar">
-        <div class="brand">
-          <svg class="logo" viewBox="0 0 32 32" aria-hidden="true">
-            <rect x="5" y="8" width="22" height="3.4" rx="1.7" />
-            <rect x="5" y="15" width="15" height="3.4" rx="1.7" opacity=".6" />
-            <rect x="5" y="22" width="19" height="3.4" rx="1.7" opacity=".3" />
-          </svg>
-          <span>Cueline</span>
-        </div>
+        <div class="brand">Cueline</div>
 
         <div class="topbar-mid">
-          <select id="script-picker" class="picker" aria-label="Choose script"></select>
-          <button class="ghost sm" id="btn-new" title="New script">New</button>
-          <button class="ghost sm" id="btn-import" title="Open a .txt or .md file">Open file</button>
-          <button class="ghost sm" id="btn-delete" title="Delete this script">Delete</button>
+          <select id="script-picker" class="picker" aria-label="Script"></select>
+          <button class="btn quiet" id="btn-new">
+            <span class="btn-label">New</span>
+          </button>
+          <button class="btn quiet" id="btn-import">
+            <span class="btn-label">Open</span>
+          </button>
           <input type="file" id="file-input" accept=".txt,.md,.markdown,text/plain" hidden />
+          <button class="btn quiet" id="btn-delete">
+            <span class="btn-label">Delete</span>
+          </button>
         </div>
 
         <div class="topbar-right">
-          <button class="ghost sm" id="btn-editor" title="Show or hide the script editor">
-            Editor
-          </button>
-          <button class="ghost sm" id="btn-settings" aria-expanded="false">Settings</button>
-          <button class="ghost sm" id="btn-help">Help</button>
-          <button class="primary" id="btn-float">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M3 5h18v14H3z" fill="none" stroke="currentColor" stroke-width="1.8" />
-              <rect x="12" y="11" width="8" height="6" rx="1" fill="currentColor" />
-            </svg>
-            Float over Zoom
+          <button class="btn quiet sq" id="btn-editor" data-icon="editor-panel" title="Script pane"></button>
+          <button class="btn quiet sq" id="btn-settings" data-icon="settings" title="Settings" aria-expanded="false"></button>
+          <button class="btn quiet sq" id="btn-help" data-icon="help" title="How to present with this"></button>
+          <button class="btn" id="btn-float">
+            <span data-icon="float"></span><span id="float-label">Float over Zoom</span>
           </button>
         </div>
       </header>
 
       <main class="main" id="main">
-        <!-- --------------------------------------------------- editor -->
-        <section class="editor-pane" id="editor-pane">
+        <!-- =================================================== script -->
+        <section class="script-pane" id="script-pane">
           <div class="pane-head">
-            <input id="script-name" class="name-field" placeholder="Untitled script" />
-            <label class="target">
-              <span>Target</span>
-              <input id="target-min" type="number" min="0" max="600" step="0.5" placeholder="—" />
-              <span>min</span>
-            </label>
+            <input id="script-name" class="name-field" placeholder="Untitled" />
+            <div class="target">
+              <span class="lbl">Target</span>
+              <input id="target-min" type="number" min="0" max="600" step="0.5" aria-label="Target length in minutes" />
+              <span class="unit">min</span>
+            </div>
           </div>
 
           <textarea
@@ -70,116 +63,130 @@
             placeholder="Paste your script here.
 
 # A heading becomes a section you can jump to
-> A line starting with > is a cue to yourself. Dimmed, never counted, never spoken.
---- draws a divider, handy for 'advance the slide'
-**bold** for the words you must not fumble, *italic* for emphasis
-- bullets work too"
+> A line beginning with > is a note to yourself. Dimmed, never spoken, never counted.
+--- draws a rule, for a slide change
+**bold** for words you must not fumble, *italic* for stress"
           ></textarea>
 
           <div class="pane-foot">
             <div id="stats" class="stats"></div>
-            <button class="ghost sm" id="btn-collapse" title="Hide the editor">Hide editor ›</button>
+            <button class="btn quiet sq" id="btn-collapse" title="Hide the script pane" data-icon="close"></button>
           </div>
         </section>
 
-        <!-- ------------------------------------------------- prompter -->
+        <!-- ================================================== prompter -->
         <section class="stage" id="stage">
           <div id="prompter-host" class="prompter-host">
-            <!-- #prompter moves in and out of the floating window; everything
-                 it needs must live inside it. -->
-            <div id="prompter" class="prompter bg-dim focus-band show-marks">
+            <!-- This subtree is moved into the floating window at runtime.
+                 Everything it needs must live inside it. -->
+            <div id="prompter" class="prompter bg-dim focus-band show-marks dim-spent">
               <div class="p-viewport" id="p-viewport">
                 <div class="p-mask" id="p-mask">
                   <div class="p-content" id="p-content"></div>
                 </div>
+
                 <div class="p-marks">
                   <span class="mk mk-l"></span><span class="mk mk-r"></span
                   ><span class="mk-line"></span>
                 </div>
-                <div class="p-countdown" id="p-countdown" hidden><span id="p-count-n">3</span></div>
-                <div class="p-empty" id="p-empty" hidden>Nothing to read yet — write a script.</div>
+
+                <div class="p-countdown" id="p-countdown" hidden>
+                  <div class="p-count-ring">
+                    <svg viewBox="0 0 78 78" aria-hidden="true">
+                      <circle class="p-count-track" cx="39" cy="39" r="36" />
+                      <circle class="p-count-sweep" cx="39" cy="39" r="36" />
+                    </svg>
+                    <span id="p-count-n" class="num">3</span>
+                  </div>
+                </div>
+
+                <div class="p-empty" id="p-empty" hidden>No script loaded.</div>
               </div>
 
               <div class="p-bar" id="p-bar">
-                <button class="p-btn p-play" id="p-play" title="Start / stop — Space">
-                  <svg class="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-                  <svg class="i-pause off" viewBox="0 0 24 24">
-                    <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
-                  </svg>
+                <button class="p-btn p-play" id="p-play" aria-label="Start or stop">
+                  <span class="i-play" data-icon="play"></span>
+                  <span class="i-pause off" data-icon="pause"></span>
                 </button>
-                <button class="p-btn" id="p-slower" title="Slower — ↓">−</button>
-                <span class="p-wpm"><b id="p-wpm">140</b>wpm</span>
-                <button class="p-btn" id="p-faster" title="Faster — ↑">+</button>
-                <button class="p-btn" id="p-restart" title="Back to top — R">⟲</button>
-                <span class="p-sep"></span>
-                <span class="p-time" id="p-left">--:--</span>
-                <span class="p-pace" id="p-pace" hidden></span>
+                <span class="p-clock num" id="p-left">--:--</span>
+
+                <div class="p-pace" id="p-pace" hidden>
+                  <span class="p-pace-track"><i class="p-pace-fill"></i></span>
+                  <b class="p-pace-num num" id="p-pace-num">0s</b>
+                </div>
+
                 <span class="p-flex"></span>
-                <span class="p-mic" id="p-mic" hidden>● voice</span>
-                <button class="p-btn" id="p-smaller" title="Smaller text">A−</button>
-                <button class="p-btn" id="p-bigger" title="Bigger text">A+</button>
+
+                <span class="p-tally" id="p-mic" hidden>Listening</span>
+
+                <span class="p-sect">
+                  <button class="p-btn" id="p-prev" data-icon="prev-section" aria-label="Previous section"></button>
+                  <button class="p-btn" id="p-next" data-icon="next-section" aria-label="Next section"></button>
+                </span>
+
+                <div class="p-speed">
+                  <button class="p-btn" id="p-slower" data-icon="speed-down" aria-label="Slower"></button>
+                  <b id="p-wpm" class="num">140</b>
+                  <button class="p-btn" id="p-faster" data-icon="speed-up" aria-label="Faster"></button>
+                </div>
+
+                <button class="p-btn" id="p-restart" data-icon="restart" aria-label="Back to top"></button>
               </div>
             </div>
           </div>
 
           <div id="notice" class="notice" hidden>
             <span id="notice-text"></span>
-            <button id="notice-x" aria-label="Dismiss">×</button>
+            <button id="notice-x" data-icon="close" aria-label="Dismiss"></button>
           </div>
 
           <div id="floating-note" class="floating-note" hidden>
             <div class="fn-card">
-              <div class="fn-dot"></div>
-              <h2>Now floating above your other windows</h2>
+              <div class="fn-lamp"></div>
+              <h2>Floating above your other windows</h2>
               <p>
-                Drag it under your webcam. It stays on top of Zoom, even in full screen. Close
-                that window, or press the button below, to bring it back here.
+                Drag it beneath your camera. It stays in front of Zoom, including full screen.
+                Close that window to bring it back here.
               </p>
-              <button class="primary" id="btn-unfloat">Bring it back</button>
+              <button class="btn" id="btn-unfloat">Bring it back</button>
             </div>
           </div>
         </section>
 
-        <!-- ------------------------------------------------- settings -->
-        <aside class="settings" id="settings" hidden>
+        <!-- ================================================== settings -->
+        <aside class="settings" id="settings" hidden aria-label="Settings">
           <div class="set-head">
-            <h2>Settings</h2>
-            <button class="ghost sm" id="btn-settings-close">Close</button>
+            <span class="lbl">Settings</span>
+            <button class="btn quiet sq" id="btn-settings-close" data-icon="close" aria-label="Close settings"></button>
           </div>
 
           <div class="set-group">
-            <h3>Pacing</h3>
+            <span class="lbl">Pace</span>
             <label class="ctl">
-              <span>Speed <b id="v-wpm"></b> wpm</span>
+              <span><span class="lbl">Speed</span><b><span id="v-wpm"></span> wpm</b></span>
               <input type="range" id="s-wpm" min="60" max="260" step="1" />
             </label>
             <p class="hint" id="pace-hint"></p>
-            <label class="ctl">
-              <span>Countdown before rolling <b id="v-countdown"></b></span>
-              <input type="range" id="s-countdown" min="0" max="10" step="1" />
-            </label>
+            <details class="set-more">
+              <summary><span data-icon="chevron-down"></span>Countdown</summary>
+              <div>
+                <label class="ctl">
+                  <span><span class="lbl">Before rolling</span><b id="v-countdown"></b></span>
+                  <input type="range" id="s-countdown" min="0" max="10" step="1" />
+                </label>
+              </div>
+            </details>
           </div>
 
           <div class="set-group">
-            <h3>Type</h3>
+            <span class="lbl">Type</span>
             <label class="ctl">
-              <span>Size <b id="v-fontSize"></b>px</span>
-              <input type="range" id="s-fontSize" min="16" max="96" step="1" />
+              <span><span class="lbl">Size</span><b><span id="v-fontSize"></span> px</b></span>
+              <input type="range" id="s-fontSize" min="20" max="96" step="1" />
             </label>
-            <label class="ctl">
-              <span>Line spacing <b id="v-lineHeight"></b></span>
-              <input type="range" id="s-lineHeight" min="1.1" max="2.2" step="0.05" />
-            </label>
-            <label class="ctl">
-              <span>Weight <b id="v-weight"></b></span>
-              <input type="range" id="s-weight" min="400" max="800" step="100" />
-            </label>
-            <label class="ctl">
-              <span>Side padding <b id="v-paddingX"></b>px</span>
-              <input type="range" id="s-paddingX" min="8" max="160" step="2" />
-            </label>
+            <p class="hint" id="size-hint" hidden></p>
             <div class="ctl">
-              <span>Typeface</span>
+              <span><span class="lbl">Typeface</span></span>
               <div class="seg" id="s-fontFamily">
                 <button data-v="system">System</button>
                 <button data-v="humanist">Avenir</button>
@@ -187,19 +194,40 @@
                 <button data-v="mono">Mono</button>
               </div>
             </div>
-            <div class="ctl">
-              <span>Alignment</span>
-              <div class="seg" id="s-align">
-                <button data-v="left">Left</button>
-                <button data-v="center">Centre</button>
+            <details class="set-more">
+              <summary><span data-icon="chevron-down"></span>Finer type control</summary>
+              <div>
+                <label class="ctl">
+                  <span><span class="lbl">Line spacing</span><b id="v-lineHeight"></b></span>
+                  <input type="range" id="s-lineHeight" min="1.1" max="2.2" step="0.05" />
+                </label>
+                <label class="ctl">
+                  <span><span class="lbl">Weight</span><b id="v-weight"></b></span>
+                  <input type="range" id="s-weight" min="400" max="800" step="20" />
+                </label>
+                <label class="ctl">
+                  <span><span class="lbl">Measure</span><b><span id="v-measureEm"></span> em</b></span>
+                  <input type="range" id="s-measureEm" min="12" max="34" step="0.5" />
+                </label>
+                <label class="ctl">
+                  <span><span class="lbl">Side margin</span><b><span id="v-paddingX"></span> px</b></span>
+                  <input type="range" id="s-paddingX" min="8" max="160" step="2" />
+                </label>
+                <div class="ctl">
+                  <span><span class="lbl">Alignment</span></span>
+                  <div class="seg" id="s-align">
+                    <button data-v="left">Left</button>
+                    <button data-v="center">Centre</button>
+                  </div>
+                </div>
               </div>
-            </div>
+            </details>
           </div>
 
           <div class="set-group">
-            <h3>Look</h3>
+            <span class="lbl">Reading surface</span>
             <div class="ctl">
-              <span>Backdrop</span>
+              <span><span class="lbl">Backdrop</span></span>
               <div class="seg" id="s-background">
                 <button data-v="clear">Clear</button>
                 <button data-v="dim">Dim</button>
@@ -207,170 +235,217 @@
               </div>
             </div>
             <label class="ctl">
-              <span>Reading line height <b id="v-readingLine"></b></span>
+              <span><span class="lbl">Reading line</span><b id="v-readingLine"></b></span>
               <input type="range" id="s-readingLine" min="0.15" max="0.7" step="0.01" />
             </label>
-            <label class="check"
-              ><input type="checkbox" id="s-focusBand" /><span
-                >Fade text away from the reading line</span
-              ></label
-            >
-            <label class="check"
-              ><input type="checkbox" id="s-showMarks" /><span
-                >Show the reading-line markers</span
-              ></label
-            >
-            <label class="check"
-              ><input type="checkbox" id="s-dimSpent" /><span
-                >Dim lines you have already said</span
-              ></label
-            >
-            <label class="check"
-              ><input type="checkbox" id="s-mirror" /><span
-                >Mirror horizontally (for prompter glass)</span
-              ></label
-            >
+            <details class="set-more">
+              <summary><span data-icon="chevron-down"></span>Optics and prompter glass</summary>
+              <div>
+                <label class="check"
+                  ><input type="checkbox" id="s-dimSpent" /><span>Dim what you have already said</span></label
+                >
+                <label class="check"
+                  ><input type="checkbox" id="s-focusBand" /><span>Fade the far end of the column</span></label
+                >
+                <label class="check"
+                  ><input type="checkbox" id="s-showMarks" /><span>Show the reading-line marks</span></label
+                >
+                <label class="check"
+                  ><input type="checkbox" id="s-mirror" /><span>Mirror left to right</span></label
+                >
+                <label class="check"
+                  ><input type="checkbox" id="s-flip" /><span>Flip top to bottom</span></label
+                >
+                <p class="hint">
+                  Mirror and flip are for beam-splitter rigs, where the glass reverses the image
+                  before it reaches you.
+                </p>
+              </div>
+            </details>
           </div>
 
           <div class="set-group">
-            <h3>Voice follow <span class="tag" id="voice-tag">beta</span></h3>
-            <p class="hint">
-              Instead of scrolling at a fixed speed, Cueline listens to you and keeps the line
-              you are actually saying on the reading line. Pause, ad-lib, or go off script and it
-              waits for you. Chrome and Edge only. Speech is processed by your browser's
-              recognition service, so leave it off for confidential material.
-            </p>
+            <span class="lbl">Voice follow</span>
             <label class="check"
-              ><input type="checkbox" id="s-voice" /><span>Follow my voice</span></label
+              ><input type="checkbox" id="s-voice" /><span
+                >Follow my voice — <b>Start</b> then becomes <b>Listen</b></span
+              ></label
             >
-            <div class="hint" id="voice-status"></div>
-          </div>
-
-          <div class="set-group">
-            <h3>Floating window</h3>
             <label class="ctl">
-              <span>Width <b id="v-pipW"></b>px</span>
+              <span><span class="lbl">Spoken language</span></span>
+              <select id="s-voiceLang" class="picker wide">
+                <option value="">Match my browser</option>
+                <option value="en-US">English (United States)</option>
+                <option value="en-GB">English (United Kingdom)</option>
+                <option value="en-AU">English (Australia)</option>
+                <option value="en-IN">English (India)</option>
+                <option value="es-ES">Spanish (Spain)</option>
+                <option value="es-MX">Spanish (Mexico)</option>
+                <option value="fr-FR">French</option>
+                <option value="de-DE">German</option>
+                <option value="it-IT">Italian</option>
+                <option value="pt-BR">Portuguese (Brazil)</option>
+                <option value="nl-NL">Dutch</option>
+                <option value="sv-SE">Swedish</option>
+                <option value="pl-PL">Polish</option>
+                <option value="ja-JP">Japanese</option>
+                <option value="ko-KR">Korean</option>
+                <option value="cmn-Hans-CN">Chinese (Mandarin, simplified)</option>
+                <option value="hi-IN">Hindi</option>
+              </select>
+            </label>
+            <p class="hint" id="voice-status"></p>
+            <p class="hint">
+              Speech is transcribed by your browser's recognition service, which means it leaves
+              this machine. Leave this off for material that must not.
+            </p>
+          </div>
+
+          <div class="set-group">
+            <span class="lbl">Floating window</span>
+            <label class="ctl">
+              <span><span class="lbl">Width</span><b><span id="v-pipW"></span> px</b></span>
               <input type="range" id="s-pipW" min="320" max="1200" step="10" />
             </label>
             <label class="ctl">
-              <span>Height <b id="v-pipH"></b>px</span>
+              <span><span class="lbl">Height</span><b><span id="v-pipH"></span> px</b></span>
               <input type="range" id="s-pipH" min="140" max="900" step="10" />
             </label>
             <label class="check"
-              ><input type="checkbox" id="s-hideBar" /><span
-                >Hide the control bar while floating</span
-              ></label
+              ><input type="checkbox" id="s-hideBar" /><span>Keep the control bar hidden</span></label
             >
+            <p class="hint">
+              The bar withdraws on its own a couple of seconds into a roll, and returns when you
+              move the pointer over the window.
+            </p>
           </div>
 
           <div class="set-group">
-            <button class="ghost" id="btn-reset">Reset settings to defaults</button>
-            <p class="hint small">
-              Your scripts and settings are stored in this browser only. Nothing is uploaded.
+            <button class="btn quiet" id="btn-reset">Reset all settings</button>
+            <p class="hint" style="margin-top: var(--s-3)">
+              Scripts and settings are held in this browser only. Nothing is uploaded.
             </p>
           </div>
         </aside>
       </main>
 
+      <!-- ===================================================== transport -->
       <footer class="transport">
-        <button class="t-play" id="t-play" title="Start / stop — Space">
-          <svg class="i-play" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
-          <svg class="i-pause off" viewBox="0 0 24 24">
-            <path d="M6 5h4v14H6zM14 5h4v14h-4z" />
-          </svg>
+        <button class="t-play" id="t-play" title="Start or stop — Space">
+          <span class="i-play" data-icon="play"></span>
+          <span class="i-pause off" data-icon="pause"></span>
           <span id="t-play-label">Start</span>
         </button>
-        <button class="ghost sq" id="t-restart" title="Back to top — R">⟲</button>
-        <button class="ghost sq" id="t-prev" title="Previous section — ←">⤒</button>
-        <button class="ghost sq" id="t-next" title="Next section — →">⤓</button>
+
+        <div class="t-group">
+          <button class="btn quiet sq" id="t-restart" data-icon="restart" title="Back to top — R"></button>
+          <button class="btn quiet sq" id="t-prev" data-icon="prev-section" title="Previous section — ←"></button>
+          <button class="btn quiet sq" id="t-next" data-icon="next-section" title="Next section — →"></button>
+        </div>
 
         <div class="scrub-wrap">
-          <div class="scrub" id="scrub" role="slider" tabindex="0" aria-label="Position in script">
+          <div class="scrub" id="scrub" role="slider" tabindex="0" aria-label="Position in script"
+               aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
             <div class="scrub-fill" id="scrub-fill"></div>
             <div class="scrub-marks" id="scrub-marks"></div>
             <div class="scrub-knob" id="scrub-knob"></div>
           </div>
           <div class="times">
-            <span id="t-elapsed">0:00</span>
-            <span id="t-pace" class="t-pace"></span>
-            <span id="t-remaining">--:-- left</span>
+            <span id="t-elapsed" class="num">0:00</span>
+            <span id="t-pace" class="t-pace num"></span>
+            <span id="t-remaining" class="num">--:--</span>
           </div>
-        </div>
-
-        <div class="share-note" id="share-note" title="How to keep this out of your Zoom share">
-          <span class="sn-dot"></span>
-          <span>Share a <b>window</b> or <b>tab</b>, not the whole screen</span>
         </div>
       </footer>
     </div>
 
-    <!-- =========================================================== help -->
-    <div class="modal" id="help" hidden>
+    <!-- ========================================================== help -->
+    <div class="modal" id="help" hidden role="dialog" aria-modal="true" aria-labelledby="help-title">
       <div class="modal-card">
-        <button class="modal-x" id="help-close" aria-label="Close">×</button>
-        <h2>Presenting on Zoom with Cueline</h2>
+        <button class="modal-x" id="help-close" data-icon="close" aria-label="Close"></button>
+        <h2 id="help-title">Presenting with Cueline</h2>
 
         <ol class="steps">
           <li>
-            <b>Write or paste your script</b>, then set a target length. Cueline works out the
-            words-per-minute that lands it and warns you when you drift.
+            <b>Load your script and set a target length.</b> Cueline works out the delivery rate
+            that lands it, and reports your drift against it while you speak.
           </li>
           <li>
-            <b>Press “Float over Zoom”.</b> The prompter moves into a small always-on-top window.
-            Drag it right under your webcam so your eyes stay near the lens.
+            <b>Float the prompter</b> and position it directly beneath your camera. Keep the
+            column narrow; the less your eyes travel, the more you appear to be speaking rather
+            than reading.
           </li>
           <li>
-            <b>In Zoom, share a <em>window</em> or a <em>Chrome tab</em></b> — not “Entire
-            Screen”. A window share only contains the app you picked, so the floating prompter is
-            never in it.
+            <b>In Zoom, share a window or a single browser tab.</b> Not the entire screen.
           </li>
           <li>
-            <b>Start it rolling.</b> Turn on voice follow and it tracks what you actually say;
-            otherwise it scrolls at your chosen speed and you nudge it with the buttons.
+            <b>Roll.</b> Either at a set rate, or with voice follow, which tracks what you
+            actually say.
           </li>
         </ol>
 
-        <h3>The one thing to get right</h3>
+        <h3>Screen sharing</h3>
         <p class="warn">
-          If you share <b>Entire Screen</b>, your audience sees everything on it, including the
-          floating prompter. Browsers are not allowed to hide a window from screen capture — only
-          a native app can do that. Share a window or a tab and you are fine. Cueline shows a
-          reminder in the bar at all times.
+          A web page cannot exclude itself from screen capture; only a native application can.
+          Sharing a <b>window</b> or a <b>single tab</b> sends only that surface, so the floating
+          prompter is never in it. Sharing the <b>entire screen</b> sends everything on it,
+          including the prompter. Cueline asks you to confirm this once, the first time you float
+          the window.
         </p>
 
         <h3>Keyboard</h3>
         <table class="keys">
-          <tr><td><kbd>Space</kbd></td><td>Start / stop</td></tr>
-          <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Faster / slower</td></tr>
-          <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Previous / next section</td></tr>
-          <tr><td><kbd>J</kbd> <kbd>K</kbd></td><td>Nudge back / forward one line</td></tr>
-          <tr><td><kbd>R</kbd></td><td>Back to the top</td></tr>
-          <tr><td><kbd>M</kbd></td><td>Mirror</td></tr>
+          <tr><td><kbd>Space</kbd></td><td>Start and stop</td></tr>
+          <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Faster, slower</td></tr>
+          <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Previous, next section</td></tr>
+          <tr><td><kbd>J</kbd> <kbd>K</kbd></td><td>Back, forward one line</td></tr>
+          <tr><td><kbd>R</kbd></td><td>Return to the top</td></tr>
+          <tr><td><kbd>M</kbd></td><td>Mirror, for prompter glass</td></tr>
           <tr><td><kbd>F</kbd></td><td>Full screen</td></tr>
-          <tr><td><kbd>+</kbd> <kbd>−</kbd></td><td>Text size</td></tr>
+          <tr><td><kbd>+</kbd> <kbd>−</kbd></td><td>Type size</td></tr>
+          <tr><td><kbd>Esc</kbd></td><td>Close this, or the floating window</td></tr>
         </table>
         <p class="hint">
-          Keys work when the prompter window or this page has focus. While Zoom has focus, use the
-          buttons on the floating prompter, or let voice follow drive it hands-free.
+          Keys reach the prompter whenever its window or this page has focus. While Zoom holds
+          focus, use the controls on the floating window, or let voice follow drive it.
         </p>
 
-        <h3>Script formatting</h3>
+        <h3>Script format</h3>
         <table class="keys">
           <tr><td><code># Heading</code></td><td>a section you can jump between</td></tr>
-          <tr><td><code>&gt; Cue</code></td><td>a note to yourself — dimmed, never counted</td></tr>
-          <tr><td><code>---</code></td><td>a divider, e.g. change the slide</td></tr>
-          <tr><td><code>**bold**</code> <code>*italic*</code></td><td>emphasis</td></tr>
-          <tr><td><code>- item</code></td><td>a bullet</td></tr>
+          <tr><td><code>&gt; Note</code></td><td>a cue to yourself — dimmed, never counted</td></tr>
+          <tr><td><code>---</code></td><td>a rule, for a slide change</td></tr>
+          <tr><td><code>**bold**</code> <code>*italic*</code></td><td>stress</td></tr>
+          <tr><td><code>- item</code></td><td>a list item</td></tr>
         </table>
-
-        <p class="hint small">
-          Everything stays in your browser — no account, no upload, no server. Cueline is free and
-          open source.
+        <p class="hint">
+          Headings and cues are excluded from the word count, so the timing reflects only what you
+          will say aloud.
         </p>
       </div>
     </div>
 
+    <!-- ==================================================== pre-flight -->
+    <div class="modal" id="preflight" hidden role="dialog" aria-modal="true" aria-labelledby="pf-title">
+      <div class="modal-card">
+        <h2 id="pf-title">Before you share your screen</h2>
+        <p class="warn">
+          In Zoom, share a <b>window</b> or a <b>single browser tab</b>. Do not share the entire
+          screen — a web page cannot hide itself from screen capture, so the floating prompter
+          would be visible to everyone in the call.
+        </p>
+        <p class="hint" style="margin-top: var(--s-4)">
+          Shown once. You can read it again from the help panel at any time.
+        </p>
+        <div style="display: flex; gap: var(--s-2); margin-top: var(--s-5)">
+          <button class="btn" id="pf-go">Understood — float the prompter</button>
+          <button class="btn quiet" id="pf-cancel">Cancel</button>
+        </div>
+      </div>
+    </div>
+
     <script src="script-parse.js"></script>
+    <script src="icons.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

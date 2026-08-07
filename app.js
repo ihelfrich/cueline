@@ -20,49 +20,45 @@
 const { parse, formatClock } = window.CuelineScript;
 
 const $ = (id) => document.getElementById(id);
+const escapeText = (t) =>
+  String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
 /* ------------------------------------------------------------------ state */
 
 const STORE_KEY = 'cueline.v1';
 
-const WELCOME = `# Start here
+const WELCOME = `# Cueline
 
-This is your script. It scrolls past the green reading line while you look
-straight into your camera, so your audience sees eye contact instead of the
-top of your head.
+This is the reading surface. Text scrolls past the marked line while you look
+into the camera, so your audience sees you address them rather than read to
+them.
 
-> Lines starting with ">" are cues to yourself. They are dimmed, and they
-> never count toward your word count or your timing.
+> Lines beginning with a chevron are notes to yourself. They are dimmed, never
+> spoken, and never counted toward the timing.
 
-Press **Float over Zoom** in the top right. The prompter jumps into a small
-window that stays on top of everything, including full-screen Zoom. Drag it
-directly under your webcam.
+Set a target length above the script and the pace field reports your drift
+against it as you speak. Speed is stated in words per minute, so the figure
+means something exact: seven hundred words at 140 wpm runs five minutes,
+whatever the type size or the width of the column.
 
 ---
 
-# The one rule for screen sharing
+# Screen sharing
 
-In Zoom, share a **window** or a **Chrome tab**, not "Entire Screen". A window
-share only ever contains the app you picked, so the floating prompter is not
-in it. If you share the entire screen, everything on that screen goes out,
-including this. No web page can opt out of that — only a native app can.
+Share a window, or a single browser tab. Not the entire screen.
 
-# Pace yourself
+A web page cannot exclude itself from screen capture; only a native application
+can. A window share carries only the window you nominate, so the floating
+prompter stays private. An entire-screen share carries everything on it.
 
-Set a target length in the box above the editor. Cueline works out the words
-per minute that lands it, and tells you live whether you are running ahead or
-behind. Change speed any time with the plus and minus buttons.
+# Voice follow
 
-> Cue: pause here. Look at the camera. Let it land.
+With voice follow enabled the script follows you rather than a clock. Speak,
+and the line you are saying holds the reading line. Pause, take a question, or
+leave the text altogether — it waits, and picks you up when you return.
 
-# Hands free
-
-Turn on **voice follow** in Settings and Cueline listens to you, keeping the
-line you are actually saying on the reading line. Ad-lib, pause, take a
-question — it waits, then picks you back up when you return to the script.
-
-Now delete all of this and paste in what you actually have to say.
+> Replace this with your own script when you are ready.
 `;
 
 const DEFAULTS = {
@@ -73,6 +69,8 @@ const DEFAULTS = {
   paddingX: 44,
   fontFamily: 'system',
   align: 'left',
+  measureEm: 17,
+  flip: false,
   background: 'dim',
   readingLine: 0.38,
   focusBand: true,
@@ -81,6 +79,7 @@ const DEFAULTS = {
   mirror: false,
   countdown: 3,
   voice: false,
+  voiceLang: '',
   pipW: 720,
   pipH: 300,
   hideBar: false,
@@ -99,6 +98,7 @@ function loadStore() {
     scripts: [{ id: 's1', name: 'Welcome / demo', text: WELCOME, targetMin: 0 }],
     activeId: 's1',
     seenHelp: false,
+    preflightDone: false,
   };
   if (!raw || !Array.isArray(raw.scripts) || !raw.scripts.length) return seed;
   return {
@@ -106,6 +106,7 @@ function loadStore() {
     scripts: raw.scripts,
     activeId: raw.scripts.some((s) => s.id === raw.activeId) ? raw.activeId : raw.scripts[0].id,
     seenHelp: !!raw.seenHelp,
+    preflightDone: !!raw.preflightDone,
   };
 }
 
@@ -133,11 +134,38 @@ let wordList = [];
 let y = 0;
 let layout = { textHeight: 0, maxY: 0, readingPx: 0, tops: [], heights: [] };
 let playing = false;
-let runStartedAt = null;
+/*
+ * Run clock.
+ *
+ * This counts time spent ROLLING, not wall-clock time since you first pressed
+ * play. It used to be wall clock, which meant that stopping for a ninety second
+ * audience question told you — in warning orange — that you were ninety seconds
+ * behind, when your delivery speed had not changed at all. The one number a
+ * presenter has to trust under pressure cannot behave like that. Pausing pauses
+ * the clock, exactly like a stopwatch.
+ */
+let runAccumMs = 0;
+let runResumedAt = null;
+const runElapsed = () =>
+  (runAccumMs + (runResumedAt ? Date.now() - runResumedAt : 0)) / 1000;
+const runStarted = () => runAccumMs > 0 || runResumedAt !== null;
 let countingDown = false;
-let voiceTarget = null; // y that voice-follow is easing toward
 let pipWindow = null;
 let lastFrame = 0;
+/** The control bar withdraws a couple of seconds into a roll. */
+let barIdle = false;
+let barTimer = null;
+/** Actual scroll speed, eased toward S.wpm so speed changes are not a jolt. */
+let rampWpm = db.settings.wpm;
+
+/**
+ * First-order smoothing time constants, in seconds. approach() is
+ * unconditionally stable, cannot overshoot, and gives an identical approach
+ * shape at any refresh rate — which matters here because the floating window
+ * and this page can sit on displays running at different rates.
+ */
+const TAU = { wpm: 0.28, voice: 0.22 };
+const approach = (x, target, tau, dt) => x + (target - x) * (1 - Math.exp(-dt / tau));
 
 /* ------------------------------------------------------------------ nodes */
 
@@ -166,8 +194,10 @@ const P = {
   slower: $('p-slower'),
   faster: $('p-faster'),
   restart: $('p-restart'),
-  smaller: $('p-smaller'),
-  bigger: $('p-bigger'),
+  prev: $('p-prev'),
+  next: $('p-next'),
+  paceNum: $('p-pace-num'),
+  countRing: null,
 };
 
 const pViewport = P.viewport;
@@ -252,17 +282,17 @@ function measure() {
   paint();
 }
 
+/**
+ * Paint is one property write per frame and nothing else.
+ *
+ * Dimming already-spoken text used to be a class toggle across every block on
+ * every frame — O(blocks) of layout reads at 60fps, and it dimmed a whole
+ * paragraph at a time, so the fade jumped a block at a time instead of tracking
+ * the line you are on. It is now a mask on the viewport-sized layer, which is
+ * exact to the pixel, free at run time, and works over a transparent backdrop.
+ */
 function paint() {
   pContent.style.transform = `translate3d(0, ${-y}px, 0)`;
-  if (!S.dimSpent) return;
-  const line = y + layout.readingPx;
-  const kids = pContent.children;
-  for (let i = 0; i < kids.length; i++) {
-    const n = kids[i];
-    const idx = Number(n.dataset.i);
-    const spent = (layout.tops[idx] || 0) + (layout.heights[idx] || 0) < line;
-    if (spent !== n.classList.contains('spent')) n.classList.toggle('spent', spent);
-  }
 }
 
 /* ------------------------------------------------------- position ↔ words */
@@ -270,7 +300,12 @@ function paint() {
 const pxPerWord = () =>
   doc.totalWords && layout.textHeight ? layout.textHeight / doc.totalWords : 0;
 
-const velocity = () => (pxPerWord() ? (S.wpm / 60) * pxPerWord() : 0);
+const velocityFor = (wpm) => (pxPerWord() ? (wpm / 60) * pxPerWord() : 0);
+/** What the scroll is doing right now (mid-ramp). */
+const velocity = () => velocityFor(rampWpm);
+/** What the readouts should quote — the speed you asked for, so the time
+ *  remaining does not wobble while the ramp settles. */
+const settledVelocity = () => velocityFor(S.wpm);
 
 function blockAt(scrollY) {
   const line = scrollY + layout.readingPx;
@@ -318,8 +353,20 @@ async function setPlaying(next) {
   if (next && layout.maxY <= 0) return;
 
   playing = next;
-  if (playing && !runStartedAt) runStartedAt = Date.now();
+  if (playing) {
+    runResumedAt = Date.now();
+  } else if (runResumedAt) {
+    runAccumMs += Date.now() - runResumedAt;
+    runResumedAt = null;
+  }
 
+  // In voice mode "go" means "listen", not "start the clock".
+  if (S.voice) {
+    if (playing) voiceStart();
+    else voiceStop();
+  }
+
+  wakeBar();
   syncPlayButtons();
 
   if (playing && y < 2 && S.countdown > 0) {
@@ -342,34 +389,83 @@ function togglePlay() {
   setPlaying(!playing);
 }
 
+function setBarIdle(next) {
+  if (barIdle === next) return;
+  barIdle = next;
+  prompter.classList.toggle('bar-idle', next);
+}
+
+/** Called on pointer movement over the prompter, and whenever we roll. */
+function wakeBar() {
+  setBarIdle(false);
+  clearTimeout(barTimer);
+  if (playing) barTimer = setTimeout(() => setBarIdle(true), 2200);
+}
+
+/* --------------------------------------------------------------- gliding */
+
+/**
+ * Seeks and section jumps travel rather than teleport. A cut makes you lose
+ * your place; a short eased move lets the eye follow. Duration scales with
+ * distance but is bounded, so a jump to the end of a long script is still
+ * quick.
+ */
+let glide = null;
+const easeInOutCubic = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+function glideTo(target, opts = {}) {
+  const to = clamp(target, 0, layout.maxY);
+  const dist = Math.abs(to - y);
+  VOICE.target = null;
+  if (opts.instant || dist < 1.5 || prefersReducedMotion()) {
+    glide = null;
+    y = to;
+    paint();
+    return;
+  }
+  glide = {
+    from: y,
+    to,
+    t0: performance.now(),
+    dur: clamp(150 + dist * 0.28, 190, 560),
+  };
+}
+
+function cancelGlide() {
+  glide = null;
+}
+
+function prefersReducedMotion() {
+  return window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 function restart() {
   setPlaying(false);
-  runStartedAt = null;
-  y = 0;
-  voiceTarget = null;
-  paint();
-  tickUI();
+  runAccumMs = 0;
+  runResumedAt = null;
+  rampWpm = S.wpm;
+  glideTo(0);
+  voiceResync();
+  tickUI(true);
 }
 
 function jumpSection(dir) {
   const heads = doc.blocks.filter((b) => b.type === 'h');
+  let target;
   if (!heads.length) {
-    y = clamp(y + dir * pViewport.clientHeight * 0.8, 0, layout.maxY);
+    target = y + dir * pViewport.clientHeight * 0.8;
   } else if (dir > 0) {
     const t = heads.find((h) => yForBlock(h.index) > y + 2);
-    y = t ? yForBlock(t.index) : layout.maxY;
+    target = t ? yForBlock(t.index) : layout.maxY;
   } else {
     const before = heads.filter((h) => yForBlock(h.index) < y - 4);
-    y = before.length ? yForBlock(before[before.length - 1].index) : 0;
+    target = before.length ? yForBlock(before[before.length - 1].index) : 0;
   }
-  voiceTarget = null;
-  paint();
+  glideTo(target);
 }
 
 function nudge(lines) {
-  y = clamp(y + lines * S.fontSize * S.lineHeight, 0, layout.maxY);
-  voiceTarget = null;
-  paint();
+  glideTo(y + lines * S.fontSize * S.lineHeight);
 }
 
 /* ==========================================================================
@@ -419,19 +515,28 @@ setInterval(() => {
 function frame(ts) {
   lastTickAt = performance.now();
   scheduleFrame();
-  const dt = lastFrame ? Math.min((ts - lastFrame) / 1000, 0.25) : 0;
+  const dt = lastFrame ? clamp((ts - lastFrame) / 1000, 0, 0.25) : 0;
   lastFrame = ts;
 
   if (layout.maxY > 0 && !countingDown) {
-    if (voiceTarget !== null) {
-      // Voice follow: ease toward where we heard you, never jump.
-      const diff = voiceTarget - y;
-      if (Math.abs(diff) < 0.6) {
-        y = voiceTarget;
-        voiceTarget = null;
-      } else {
-        y = clamp(y + diff * Math.min(1, dt * 4.5), 0, layout.maxY);
+    // Ease the real speed toward the requested speed. Nudging the pace mid
+    // sentence should feel like leaning on the accelerator, not a gear change.
+    if (rampWpm !== S.wpm) {
+      rampWpm = approach(rampWpm, S.wpm, TAU.wpm, dt);
+      if (Math.abs(S.wpm - rampWpm) < 0.4) rampWpm = S.wpm;
+    }
+
+    if (glide) {
+      const p = clamp((performance.now() - glide.t0) / glide.dur, 0, 1);
+      y = glide.from + (glide.to - glide.from) * easeInOutCubic(p);
+      if (p >= 1) {
+        y = glide.to;
+        glide = null;
       }
+      paint();
+    } else if (voiceTick(dt)) {
+      // Voice follow drives the scroll; the wpm clock stands down so the two
+      // cannot fight each other for the same pixels.
       paint();
     } else if (playing) {
       const v = velocity();
@@ -456,14 +561,14 @@ function tickUI(force) {
   if (!force && now - uiLast < 100) return;
   uiLast = now;
 
-  const v = velocity();
+  const v = settledVelocity();
   const remaining = v > 0 ? (layout.maxY - y) / v : NaN;
   const frac = layout.maxY > 0 ? y / layout.maxY : 0;
 
   $('scrub-fill').style.width = frac * 100 + '%';
   $('scrub-knob').style.left = frac * 100 + '%';
 
-  const elapsed = runStartedAt ? (Date.now() - runStartedAt) / 1000 : 0;
+  const elapsed = runElapsed();
   $('t-elapsed').textContent = formatClock(elapsed);
   $('t-remaining').textContent = formatClock(remaining) + ' left';
   P.left.textContent = formatClock(remaining);
@@ -473,23 +578,24 @@ function tickUI(force) {
   const target = (Number(active().targetMin) || 0) * 60;
   const pPace = P.pace;
   const tPace = $('t-pace');
-  if (target > 0 && runStartedAt) {
+  if (target > 0 && runStarted()) {
     const expected = clamp(elapsed / target, 0, 1.5);
     const delta = (frac - expected) * target;
-    const cls = Math.abs(delta) < 5 ? 'onpace' : delta > 0 ? 'ahead' : 'behind';
-    const label =
-      Math.abs(delta) < 5
-        ? 'on pace'
-        : (delta > 0 ? '+' : '') + Math.round(delta) + 's ' + (delta > 0 ? 'ahead' : 'behind');
+    // Full-scale deflection at one minute of drift; direction is carried by
+    // which side of the centre index the bar sits on, never by hue.
+    const dev = clamp(delta / 60, -1, 1);
+    const out = Math.abs(delta) >= 5;
+    const label = (delta > 0 ? '+' : delta < 0 ? '\u2212' : '') + Math.round(Math.abs(delta)) + 's';
     pPace.hidden = false;
-    pPace.textContent = label;
-    pPace.className = 'p-pace ' + cls;
-    tPace.textContent = label;
-    tPace.className = 't-pace ' + cls;
+    pPace.style.setProperty('--dev', String(dev));
+    pPace.classList.toggle('out', out);
+    P.paceNum.textContent = label;
+    tPace.textContent = out ? label + (delta > 0 ? ' ahead' : ' behind') : 'on pace';
+    tPace.className = 't-pace num' + (out ? ' out' : '');
   } else {
     pPace.hidden = true;
     tPace.textContent = '';
-    tPace.className = 't-pace';
+    tPace.className = 't-pace num';
   }
 }
 
@@ -506,7 +612,11 @@ function syncPlayButtons() {
     pause.classList.toggle('off', !playing);
   }
   P.play.classList.toggle('on', playing);
-  $('t-play-label').textContent = playing ? 'Stop' : 'Start';
+  $('t-play').classList.toggle('on', playing);
+  prompter.classList.toggle('rolling', playing);
+  $('app').classList.toggle('rolling', playing);
+  const voiceMode = S.voice && !!SpeechRec;
+  $('t-play-label').textContent = playing ? 'Stop' : voiceMode ? 'Listen' : 'Start';
 }
 
 function renderStats() {
@@ -516,13 +626,13 @@ function renderStats() {
   const required = target > 0 && words ? Math.round(words / target) : 0;
 
   const bits = [
-    `<span><b>${words.toLocaleString()}</b> words</span>`,
-    `<span><b>${formatClock(est)}</b> at ${S.wpm} wpm</span>`,
+    `<span class="stat"><span class="lbl">Words</span><b>${words.toLocaleString()}</b></span>`,
+    `<span class="stat"><span class="lbl">Runs</span><b>${formatClock(est)}</b></span>`,
   ];
   if (required) {
     const hot = Math.abs(required - S.wpm) > 25;
     bits.push(
-      `<span class="req ${hot ? 'hot' : ''}">needs <b>${required} wpm</b> to hit ${target} min</span>`
+      `<span class="stat ${hot ? 'hot' : ''}"><span class="lbl">Needs</span><b>${required} wpm</b></span>`
     );
   }
   $('stats').innerHTML = bits.join('');
@@ -530,8 +640,8 @@ function renderStats() {
   const hint = $('pace-hint');
   if (hint) {
     hint.textContent = required
-      ? `${words.toLocaleString()} words in ${target} minutes needs ${required} wpm. Conversational delivery is 120–150.`
-      : 'Conversational delivery is 120–150 wpm. Set a target length in the editor to get a live pace check.';
+      ? `${words.toLocaleString()} words in ${target} minutes requires ${required} wpm. Considered delivery runs 120–150.`
+      : 'Considered delivery runs 120–150 wpm. Set a target length to get a live drift reading.';
   }
 }
 
@@ -561,6 +671,7 @@ function applySettings() {
   r.setProperty('--reading', Math.round(S.readingLine * 100) + '%');
   r.setProperty('--weight', String(S.weight));
   r.setProperty('--align', S.align);
+  r.setProperty('--measure', S.measureEm + 'em');
   if (pipWindow) {
     // The floating window has its own document, so it needs the same variables.
     const pr = pipWindow.document.documentElement.style;
@@ -570,6 +681,7 @@ function applySettings() {
     pr.setProperty('--reading', Math.round(S.readingLine * 100) + '%');
     pr.setProperty('--weight', String(S.weight));
     pr.setProperty('--align', S.align);
+    pr.setProperty('--measure', S.measureEm + 'em');
   }
 
   prompter.className =
@@ -581,13 +693,13 @@ function applySettings() {
     (S.showMarks ? ' show-marks' : '') +
     (S.dimSpent ? ' dim-spent' : '') +
     (S.mirror ? ' mirror' : '') +
+    (S.flip ? ' flip' : '') +
+    (playing ? ' rolling' : '') +
+    (barIdle ? ' bar-idle' : '') +
     (S.hideBar && pipWindow ? ' hide-bar' : '');
 
-  if (!S.dimSpent) {
-    pContent.querySelectorAll('.spent').forEach((n) => n.classList.remove('spent'));
-  }
-
   $('main').classList.toggle('editor-hidden', S.editorHidden);
+  $('main').classList.toggle('settings-open', !$('settings').hidden);
   $('btn-editor').classList.toggle('is-on', !S.editorHidden);
 
   // reflect into controls
@@ -606,6 +718,7 @@ function applySettings() {
   setRange('countdown', S.countdown, (v) => (Number(v) === 0 ? 'off' : v + 's'));
   setRange('pipW', S.pipW);
   setRange('pipH', S.pipH);
+  setRange('measureEm', S.measureEm);
 
   segSync('s-fontFamily', S.fontFamily);
   segSync('s-align', S.align);
@@ -615,8 +728,10 @@ function applySettings() {
   $('s-showMarks').checked = S.showMarks;
   $('s-dimSpent').checked = S.dimSpent;
   $('s-mirror').checked = S.mirror;
+  $('s-flip').checked = S.flip;
   $('s-hideBar').checked = S.hideBar;
   $('s-voice').checked = S.voice;
+  $('s-voiceLang').value = S.voiceLang || '';
 
   renderStats();
   save();
@@ -634,6 +749,25 @@ function relayout() {
   y = yForWord(anchor);
   paint();
   renderScrubMarks();
+  updateSizeHint();
+}
+
+/**
+ * Type auto-fits the window height, so in a short floating window the Size
+ * slider stops having any visible effect. Say so, rather than letting the
+ * control look broken.
+ */
+function updateSizeHint() {
+  const n = $('size-hint');
+  if (!n) return;
+  const used = parseFloat(getComputedStyle(pContent).fontSize) || S.fontSize;
+  const clamped = used < S.fontSize - 0.5;
+  n.hidden = !clamped;
+  if (clamped) {
+    n.textContent =
+      `Showing ${Math.round(used)} px. The window is too short for ${S.fontSize} px, ` +
+      'so the type is being fitted to it. Make the window taller for larger type.';
+  }
 }
 
 function setSetting(key, value, { relayout: needsLayout = true } = {}) {
@@ -675,11 +809,21 @@ function loadScript(id) {
    ========================================================================== */
 
 let noticeTimer = null;
-function notify(html, kind = 'info', ms = 11000) {
+function notify(html, kind = 'info', ms = 11000, action = null) {
   const n = $('notice');
-  $('notice-text').innerHTML = html;
+  $('notice-text').innerHTML =
+    html + (action ? ` <button class="btn quiet notice-action">${action.label}</button>` : '');
   n.className = 'notice' + (kind === 'warn' ? ' warn' : '');
   n.hidden = false;
+  if (action) {
+    // Held by reference, not looked up by id: it does not exist in the markup.
+    const btn = $('notice-text').querySelector('.notice-action');
+    if (btn)
+      btn.onclick = () => {
+        n.hidden = true;
+        action.run();
+      };
+  }
   clearTimeout(noticeTimer);
   if (ms) noticeTimer = setTimeout(() => (n.hidden = true), ms);
 }
@@ -781,8 +925,8 @@ async function openFloat() {
   }
 
   $('floating-note').hidden = false;
-  $('btn-float').classList.add('is-floating');
-  $('btn-float').lastChild.textContent = ' Bring it back';
+  $('btn-float').classList.add('live');
+  $('float-label').textContent = 'Bring it back';
   applySettings();
   scheduleFrame(); // hand the animation clock over to the floating window
   requestAnimationFrame(relayout);
@@ -794,8 +938,8 @@ function closeFloat() {
   pipWindow = null;
   host.appendChild(prompter);
   $('floating-note').hidden = true;
-  $('btn-float').classList.remove('is-floating');
-  $('btn-float').lastChild.textContent = ' Float over Zoom';
+  $('btn-float').classList.remove('live');
+  $('float-label').textContent = 'Float over Zoom';
   try {
     win.close();
   } catch {
@@ -808,156 +952,374 @@ function closeFloat() {
 
 /* ==========================================================================
    Voice follow
+   --------------------------------------------------------------------------
+   The reader — not a clock — drives the script.
+
+   Speech recognition gives us a noisy, laggy, partially-wrong stream of words.
+   Turning that into a prompter that feels calm needs three things beyond
+   "search for the words and jump there":
+
+   1. PREDICT AND CORRECT.  Confirmations arrive in bursts every second or two.
+      Moving only on confirmation gives a stop-start crawl that is horrible to
+      read against. So between confirmations we keep gliding at the rate we
+      measured from previous confirmations, and each new match becomes a small
+      correction rather than a jump. The motion is continuous; the accuracy is
+      periodic.
+
+   2. LOCK STATES AND RE-ACQUISITION.  A presenter goes off script — an aside,
+      a question from the floor, a joke. The tracker must notice it has lost
+      them, stop moving rather than guess, and widen its search until it finds
+      them again, anywhere in the script. A narrow window that only ever looks
+      just ahead of the cursor will strand the prompter permanently.
+
+   3. ASYMMETRIC TRUST.  Moving forward on a decent match is cheap to recover
+      from. Moving backward is not — it is the failure that makes people give
+      up on voice prompters, because a repeated phrase throws them into text
+      they already read. Backward jumps therefore demand a near-perfect match.
    ========================================================================== */
 
 const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-let rec = null;
-let voiceCursor = 0;
-let voiceStopping = false;
+
+/** Rolling transcript window, in normalised words. */
+const HEARD_KEEP = 24;
+/** How many recent words we try to align against the script. */
+const TAIL = 7;
+
+const VOICE = {
+  rec: null,
+  /** 'off' | 'starting' | 'listening' | 'locked' | 'searching' | 'denied' | 'error' | 'unsupported' */
+  status: 'off',
+  wantOn: false,
+  finalWords: [],
+  interimWords: [],
+  /** Script word index we believe the reader has reached. */
+  cursor: 0,
+  /** Target y for the corrector to ease toward, or null. */
+  target: null,
+  /** Measured speaking rate in words per second, exponentially smoothed. */
+  rate: 0,
+  lastMatchAt: 0,
+  lastSpeechAt: 0,
+  lastCursor: 0,
+  lastCursorAt: 0,
+  consecutiveMisses: 0,
+  restartTimer: null,
+  restartDelay: 250,
+  message: '',
+};
 
 function sameWord(a, b) {
   if (!a || !b) return false;
   if (a === b) return true;
+  // Speech engines routinely differ on inflection ("run"/"running") and on
+  // plurals, so compare stems once both words are long enough for that to
+  // mean something.
   return a.length > 3 && b.length > 3 && a.slice(0, 4) === b.slice(0, 4);
 }
 
 /**
- * Align the tail of what was heard against the script near the current
- * position. Returns the script word index just past the match, or null.
+ * How far either side of the cursor to search.
+ *
+ * While we are tracking well, look only just behind and a couple of sentences
+ * ahead: it is fast and it cannot be fooled by a phrase repeated elsewhere.
+ * The longer we go without a confident match, the more likely it is the reader
+ * has moved somewhere we are not looking, so widen until eventually we search
+ * the whole script.
  */
-function alignVoice(heard) {
-  const tail = heard.slice(-6);
-  if (tail.length < 3 || !wordList.length) return null;
+function voiceWindow() {
+  const quiet = (performance.now() - VOICE.lastMatchAt) / 1000;
+  if (quiet < 3) return [30, 140];
+  if (quiet < 8) return [120, 400];
+  return [Infinity, Infinity];
+}
 
-  const lo = Math.max(0, voiceCursor - 25);
-  const hi = Math.min(wordList.length, voiceCursor + 160);
-  let best = { weighted: 0, raw: 0, end: -1 };
+/**
+ * Align the tail of what was heard against the script.
+ * @returns {{end:number, raw:number, at:number}|null}
+ */
+function alignVoice(heard, cursor, words) {
+  const tail = heard.slice(-TAIL);
+  if (tail.length < 3 || !words.length) return null;
+
+  const [back, fwd] = voiceWindow();
+  const lo = Math.max(0, cursor - (back === Infinity ? cursor : back));
+  const hi = Math.min(words.length, fwd === Infinity ? words.length : cursor + fwd);
+
+  let best = { weighted: 0, raw: 0, end: -1, at: -1 };
 
   for (let i = lo; i < hi; i++) {
     let raw = 0;
     let si = i;
-    for (let j = 0; j < tail.length && si < wordList.length; j++) {
-      if (sameWord(tail[j], wordList[si].norm)) {
+    let skips = 0;
+    for (let j = 0; j < tail.length && si < words.length; j++) {
+      if (sameWord(tail[j], words[si].norm)) {
         raw++;
         si++;
-      } else if (si + 1 < wordList.length && sameWord(tail[j], wordList[si + 1].norm)) {
-        // absorb one skipped script word (a filler, a misheard article)
+      } else if (skips < 2 && si + 1 < words.length && sameWord(tail[j], words[si + 1].norm)) {
+        // Absorb a word the reader skipped, or one the recogniser dropped.
         raw++;
         si += 2;
+        skips++;
       }
     }
-    // Break ties toward where we already are. Without this, a run of common
+    // Break ties toward where we already are. Without this a run of common
     // words ("and then the") scores equally in several places and the earliest
-    // candidate wins, yanking the prompter backwards across the script.
-    const weighted = raw * (1 - Math.min(1, Math.abs(i - voiceCursor) / 200) * 0.5);
-    if (weighted > best.weighted) best = { weighted, raw, end: si };
+    // candidate wins, dragging the reader backwards across the script.
+    const weighted = raw * (1 - Math.min(1, Math.abs(i - cursor) / 200) * 0.5);
+    if (weighted > best.weighted) best = { weighted, raw, end: si, at: i };
   }
 
-  // Bias strict. A missed match just holds position, which the reader will not
-  // even notice; a false match jumps them to the wrong line mid-sentence.
   const need = Math.max(3, Math.ceil(tail.length * 0.6));
-  return best.raw >= need ? best.end : null;
+  if (best.raw < need) return null;
+
+  // Going backwards is the expensive mistake: it drops the reader into text
+  // they have already said. Demand near-certainty for it.
+  if (best.end < cursor - 25 && best.raw < Math.max(5, tail.length - 1)) return null;
+
+  return best;
 }
 
-function voiceStatus(text, cls) {
-  const n = $('voice-status');
-  n.textContent = text;
-  n.className = 'hint' + (cls ? ' ' + cls : '');
+/* ------------------------------------------------------------ transcript */
+
+function voiceHeard() {
+  const all = VOICE.finalWords.concat(VOICE.interimWords);
+  return all.slice(-HEARD_KEEP);
 }
 
-function startVoice() {
+function toWords(text) {
+  return text.split(/\s+/).map(normalize).filter(Boolean);
+}
+
+/* ---------------------------------------------------------------- status */
+
+const VOICE_COPY = {
+  off: 'Off — the prompter scrolls at the speed you set.',
+  starting: 'Starting the microphone…',
+  listening: 'Listening. Start reading and the prompter will pick you up.',
+  locked: 'Following you.',
+  searching: 'Lost the thread — say a line from the script and it will find you.',
+  denied: 'Microphone access was refused, so voice follow is off.',
+  error: 'Speech recognition stopped unexpectedly.',
+  unsupported: 'This browser has no speech recognition. Voice follow needs Chrome, Edge, Arc or Brave.',
+};
+
+function setVoiceStatus(status, message) {
+  VOICE.status = status;
+  VOICE.message = message || VOICE_COPY[status] || '';
+  const el = $('voice-status');
+  if (el) {
+    el.textContent = VOICE.message;
+    el.className =
+      'hint' +
+      (status === 'locked' || status === 'listening' ? ' ok' : '') +
+      (status === 'denied' || status === 'error' || status === 'unsupported' ? ' bad' : '');
+  }
+  if (P.mic) {
+    P.mic.hidden = !(status === 'listening' || status === 'locked' || status === 'searching');
+    P.mic.dataset.state = status;
+    P.mic.textContent = status === 'locked' ? 'following' : status === 'searching' ? 'searching' : 'listening';
+  }
+  syncPlayButtons();
+}
+
+/** Voice owns the scroll whenever it is actually running. */
+function voiceDriving() {
+  return S.voice && VOICE.wantOn;
+}
+
+/* -------------------------------------------------------------- lifecycle */
+
+function voiceStart() {
   if (!SpeechRec) {
-    voiceStatus(
-      'This browser has no speech recognition. Voice follow needs Chrome, Edge, Arc or Brave.',
-      'bad'
-    );
+    setVoiceStatus('unsupported');
     S.voice = false;
-    $('s-voice').checked = false;
+    const cb = $('s-voice');
+    if (cb) cb.checked = false;
     return;
   }
-  if (rec) return;
+  if (VOICE.rec) return;
 
-  rec = new SpeechRec();
+  VOICE.wantOn = true;
+  VOICE.finalWords = [];
+  VOICE.interimWords = [];
+  VOICE.cursor = Math.round(currentWord());
+  VOICE.lastCursor = VOICE.cursor;
+  VOICE.lastCursorAt = performance.now();
+  VOICE.lastMatchAt = performance.now();
+  VOICE.lastSpeechAt = 0;
+  VOICE.rate = 0;
+  VOICE.target = null;
+  VOICE.consecutiveMisses = 0;
+  VOICE.restartDelay = 250;
+
+  const rec = new SpeechRec();
+  VOICE.rec = rec;
   rec.continuous = true;
   rec.interimResults = true;
-  rec.lang = navigator.language || 'en-US';
+  rec.maxAlternatives = 1;
+  rec.lang = S.voiceLang || navigator.language || 'en-US';
 
   rec.onstart = () => {
-    voiceStatus('Listening. Speak your script and the prompter will follow.', 'ok');
-    P.mic.hidden = false;
+    VOICE.restartDelay = 250;
+    setVoiceStatus('listening');
   };
 
   rec.onresult = (e) => {
-    const heard = [];
+    VOICE.lastSpeechAt = performance.now();
+
+    // Committed results are appended once; the interim tail is replaced each event
+    // rather than appended, or the same words pile up and poison the match.
+    let interim = '';
     for (let i = e.resultIndex; i < e.results.length; i++) {
-      heard.push(
-        ...e.results[i][0].transcript
-          .split(/\s+/)
-          .map(normalize)
-          .filter(Boolean)
-      );
+      const r = e.results[i];
+      if (r.isFinal) VOICE.finalWords.push(...toWords(r[0].transcript));
+      else interim += ' ' + r[0].transcript;
     }
-    const end = alignVoice(heard);
-    if (end !== null) {
-      voiceCursor = end;
-      const w = wordList[Math.min(end, wordList.length - 1)];
-      // Keep the line being spoken ON the reading line, not above it.
-      voiceTarget = yForWord(w ? w.index : 0);
+    VOICE.interimWords = toWords(interim);
+    if (VOICE.finalWords.length > HEARD_KEEP * 3) {
+      VOICE.finalWords = VOICE.finalWords.slice(-HEARD_KEEP * 2);
     }
+
+    const match = alignVoice(voiceHeard(), VOICE.cursor, wordList);
+    if (!match) {
+      VOICE.consecutiveMisses++;
+      // Only admit we are lost after several failures and a real gap, so a
+      // single misheard phrase does not flip the UI into "searching".
+      if (VOICE.consecutiveMisses >= 3 && performance.now() - VOICE.lastMatchAt > 4000) {
+        setVoiceStatus('searching');
+      }
+      return;
+    }
+
+    const now = performance.now();
+    const advanced = match.end - VOICE.lastCursor;
+    const dt = (now - VOICE.lastCursorAt) / 1000;
+    // Measure the reader's actual pace so the predictor between confirmations
+    // moves at their speed, not the dial's.
+    if (dt > 0.35 && advanced > 0 && advanced < 60) {
+      const observed = advanced / dt;
+      if (observed > 0.5 && observed < 8) {
+        VOICE.rate = VOICE.rate ? VOICE.rate * 0.7 + observed * 0.3 : observed;
+      }
+    }
+
+    VOICE.cursor = match.end;
+    VOICE.lastCursor = match.end;
+    VOICE.lastCursorAt = now;
+    VOICE.lastMatchAt = now;
+    VOICE.consecutiveMisses = 0;
+
+    const w = wordList[Math.min(match.end, wordList.length - 1)];
+    VOICE.target = yForWord(w ? w.index : 0);
+    if (VOICE.status !== 'locked') setVoiceStatus('locked');
   };
 
   rec.onerror = (e) => {
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-      voiceStatus('Microphone access was refused, so voice follow is off.', 'bad');
+      setVoiceStatus('denied');
       S.voice = false;
-      $('s-voice').checked = false;
-      stopVoice();
-    } else if (e.error === 'no-speech') {
-      voiceStatus('Listening — no speech heard yet.', '');
+      const cb = $('s-voice');
+      if (cb) cb.checked = false;
+      voiceStop();
+      save();
+    } else if (e.error === 'no-speech' || e.error === 'aborted') {
+      // Routine. onend will restart us.
+    } else if (e.error === 'audio-capture') {
+      setVoiceStatus('error', 'No microphone was found.');
+    } else if (e.error === 'network') {
+      setVoiceStatus('error', 'Speech recognition needs a network connection.');
     } else {
-      voiceStatus('Speech recognition error: ' + e.error, 'bad');
+      setVoiceStatus('error', 'Speech recognition error: ' + e.error);
     }
   };
 
   rec.onend = () => {
-    P.mic.hidden = true;
-    // Chrome ends the session periodically; restart unless we asked it to stop.
-    if (S.voice && !voiceStopping) {
-      setTimeout(() => {
-        try {
-          rec && rec.start();
-        } catch {
-          /* already starting */
-        }
-      }, 250);
+    // Chrome ends the session on its own every so often, and after silence.
+    // Restart with backoff so a hard failure cannot become a hot loop.
+    if (!VOICE.wantOn) {
+      setVoiceStatus('off');
+      return;
     }
+    clearTimeout(VOICE.restartTimer);
+    VOICE.restartTimer = setTimeout(() => {
+      if (!VOICE.wantOn || !VOICE.rec) return;
+      try {
+        VOICE.rec.start();
+      } catch {
+        /* already starting */
+      }
+    }, VOICE.restartDelay);
+    VOICE.restartDelay = Math.min(VOICE.restartDelay * 1.8, 8000);
   };
 
-  voiceCursor = Math.round(currentWord());
-  voiceStopping = false;
+  setVoiceStatus('starting');
   try {
     rec.start();
   } catch {
-    /* already started */
+    /* start() throws if called twice; onstart will settle the status */
   }
 }
 
-function stopVoice() {
-  voiceStopping = true;
-  voiceTarget = null;
-  P.mic.hidden = true;
-  if (rec) {
+function voiceStop() {
+  VOICE.wantOn = false;
+  clearTimeout(VOICE.restartTimer);
+  VOICE.target = null;
+  VOICE.rate = 0;
+  if (VOICE.rec) {
+    const rec = VOICE.rec;
+    VOICE.rec = null;
     try {
+      rec.onend = null;
       rec.stop();
     } catch {
       /* ignore */
     }
-    rec = null;
   }
-  voiceStatus(
-    SpeechRec ? 'Off. Cueline scrolls at the speed you set.' : 'Not available in this browser.',
-    ''
-  );
+  setVoiceStatus(SpeechRec ? 'off' : 'unsupported');
+}
+
+/** Called when the script or position changes underneath the tracker. */
+function voiceResync() {
+  VOICE.cursor = Math.round(currentWord());
+  VOICE.lastCursor = VOICE.cursor;
+  VOICE.lastCursorAt = performance.now();
+  VOICE.target = null;
+  VOICE.finalWords = [];
+  VOICE.interimWords = [];
+}
+
+/* ------------------------------------------------------------------ tick */
+
+/**
+ * Advance the scroll under voice control. Returns true if voice handled this
+ * frame, in which case the wpm auto-scroll must not also run.
+ */
+function voiceTick(dt) {
+  if (!voiceDriving()) return false;
+
+  const now = performance.now();
+  const sinceSpeech = (now - VOICE.lastSpeechAt) / 1000;
+  const sinceMatch = (now - VOICE.lastMatchAt) / 1000;
+
+  if (VOICE.target !== null) {
+    // Corrector: ease onto the confirmed position.
+    const diff = VOICE.target - y;
+    if (Math.abs(diff) < 0.5) {
+      y = VOICE.target;
+      VOICE.target = null;
+    } else {
+      y = clamp(approach(y, VOICE.target, TAU.voice, dt), 0, layout.maxY);
+    }
+  } else if (VOICE.status === 'locked' && VOICE.rate > 0 && sinceSpeech < 1.5 && sinceMatch < 3) {
+    // Predictor: keep moving at the reader's measured pace between
+    // confirmations, so the scroll is continuous rather than stop-start.
+    y = clamp(y + velocityFor(VOICE.rate * 60) * dt, 0, layout.maxY);
+  }
+  // Otherwise hold still: they have stopped talking, or we have lost them.
+  // Holding is always better than guessing.
+
+  if (VOICE.status === 'locked' && sinceMatch > 6) setVoiceStatus('searching');
+  return true;
 }
 
 /* ==========================================================================
@@ -975,15 +1337,16 @@ $('t-next').onclick = () => jumpSection(1);
 const bumpWpm = (d) => setSetting('wpm', clamp(S.wpm + d, 40, 400), { relayout: false });
 P.faster.onclick = () => bumpWpm(5);
 P.slower.onclick = () => bumpWpm(-5);
-P.bigger.onclick = () => setSetting('fontSize', clamp(S.fontSize + 2, 14, 120));
-P.smaller.onclick = () => setSetting('fontSize', clamp(S.fontSize - 2, 14, 120));
+P.prev.onclick = () => jumpSection(-1);
+P.next.onclick = () => jumpSection(1);
 
 /* --- scrubbing ---------------------------------------------------------- */
 function scrubTo(clientX) {
   const r = $('scrub').getBoundingClientRect();
+  cancelGlide();
   y = clamp((clientX - r.left) / r.width, 0, 1) * layout.maxY;
-  voiceTarget = null;
   paint();
+  voiceResync();
   tickUI(true);
 }
 let scrubbing = false;
@@ -1004,25 +1367,31 @@ pViewport.addEventListener(
   'wheel',
   (e) => {
     e.preventDefault();
+    cancelGlide();
     y = clamp(y + e.deltaY, 0, layout.maxY);
-    voiceTarget = null;
     paint();
+    voiceResync();
   },
   { passive: false }
 );
 
 let drag = null;
 pViewport.addEventListener('pointerdown', (e) => {
+  cancelGlide();
   drag = { y0: e.clientY, s0: y };
   pViewport.setPointerCapture(e.pointerId);
 });
 pViewport.addEventListener('pointermove', (e) => {
   if (!drag) return;
+  cancelGlide();
   y = clamp(drag.s0 - (e.clientY - drag.y0), 0, layout.maxY);
-  voiceTarget = null;
   paint();
 });
-pViewport.addEventListener('pointerup', () => (drag = null));
+pViewport.addEventListener('pointermove', wakeBar);
+pViewport.addEventListener('pointerup', () => {
+  if (drag) voiceResync();
+  drag = null;
+});
 pViewport.addEventListener('pointercancel', () => (drag = null));
 
 /* --- editor ------------------------------------------------------------- */
@@ -1036,6 +1405,7 @@ editor.addEventListener('input', () => {
     renderScript();
     y = clamp(yForWord(anchor), 0, layout.maxY);
     paint();
+    voiceResync();
     save();
   }, 260);
 });
@@ -1060,18 +1430,43 @@ $('btn-new').onclick = () => {
   editor.focus();
 };
 
+// No native confirm(): OS chrome in the middle of a considered interface is
+// the loudest possible tell. Delete immediately and offer undo instead —
+// which is also faster for the common case where the user meant it.
 $('btn-delete').onclick = () => {
+  const doomed = active();
+  const at = db.scripts.indexOf(doomed);
+  const label = doomed.name || 'Untitled';
+
   if (db.scripts.length <= 1) {
-    active().text = '';
-    active().name = 'Untitled script';
+    const restore = { ...doomed };
+    doomed.text = '';
+    doomed.name = 'Untitled';
+    doomed.targetMin = 0;
     renderLibrary();
     renderScript();
     save();
+    notify(`Cleared <b>${escapeText(label)}</b>.`, 'info', 9000, {
+      label: 'Undo',
+      run: () => {
+        Object.assign(active(), restore);
+        renderLibrary();
+        renderScript();
+        save();
+      },
+    });
     return;
   }
-  if (!confirm(`Delete "${active().name || 'this script'}"? This cannot be undone.`)) return;
-  db.scripts = db.scripts.filter((s) => s.id !== db.activeId);
+
+  db.scripts = db.scripts.filter((x) => x.id !== doomed.id);
   loadScript(db.scripts[0].id);
+  notify(`Deleted <b>${escapeText(label)}</b>.`, 'info', 9000, {
+    label: 'Undo',
+    run: () => {
+      db.scripts.splice(at, 0, doomed);
+      loadScript(doomed.id);
+    },
+  });
 };
 
 $('btn-import').onclick = () => $('file-input').click();
@@ -1115,6 +1510,7 @@ const RANGES = {
   weight: (v) => Math.round(v),
   paddingX: (v) => Math.round(v),
   readingLine: (v) => Number(v),
+  measureEm: (v) => Number(v),
   countdown: (v) => Math.round(v),
   pipW: (v) => Math.round(v),
   pipH: (v) => Math.round(v),
@@ -1134,17 +1530,30 @@ const CHECKS = {
   showMarks: 'showMarks',
   dimSpent: 'dimSpent',
   mirror: 'mirror',
+  flip: 'flip',
   hideBar: 'hideBar',
 };
 for (const [id, key] of Object.entries(CHECKS)) {
   $('s-' + id).addEventListener('change', (e) => setSetting(key, e.target.checked, { relayout: false }));
 }
 
+$('s-voiceLang').addEventListener('change', (e) => {
+  S.voiceLang = e.target.value;
+  save();
+  // A running recogniser keeps the language it started with.
+  if (VOICE.wantOn) {
+    voiceStop();
+    voiceStart();
+  }
+});
+
 $('s-voice').addEventListener('change', (e) => {
   S.voice = e.target.checked;
   save();
-  if (S.voice) startVoice();
-  else stopVoice();
+  if (S.voice && playing) voiceStart();
+  else if (!S.voice) voiceStop();
+  else setVoiceStatus('off', 'Ready — press Start and it will listen.');
+  applySettings();
 });
 
 for (const [id, key] of [
@@ -1164,37 +1573,87 @@ $('btn-reset').onclick = () => {
   requestAnimationFrame(relayout);
 };
 
-$('btn-settings').onclick = () => {
-  const open = $('settings').hidden;
-  $('settings').hidden = !open;
-  $('btn-settings').setAttribute('aria-expanded', String(open));
-  $('btn-settings').classList.toggle('is-on', open);
-};
-$('btn-settings-close').onclick = () => {
-  $('settings').hidden = true;
-  $('btn-settings').classList.remove('is-on');
-};
+function toggleSettings(open) {
+  const next = open === undefined ? $('settings').hidden : open;
+  $('settings').hidden = !next;
+  $('btn-settings').setAttribute('aria-expanded', String(next));
+  $('btn-settings').classList.toggle('on', next);
+  applySettings();
+  requestAnimationFrame(relayout);
+}
+$('btn-settings').onclick = () => toggleSettings();
+$('btn-settings-close').onclick = () => toggleSettings(false);
 
 $('btn-collapse').onclick = () => setSetting('editorHidden', true, { relayout: true });
 $('btn-editor').onclick = () => setSetting('editorHidden', !S.editorHidden, { relayout: true });
 
 /* --- float -------------------------------------------------------------- */
-$('btn-float').onclick = openFloat;
+$('btn-float').onclick = () => {
+  if (pipWindow) {
+    closeFloat();
+    return;
+  }
+  // Asked once, at the moment it matters, instead of a permanent warning
+  // stripe that everyone learns to stop seeing.
+  if (!db.preflightDone) {
+    $('preflight').hidden = false;
+    $('pf-go').focus();
+    return;
+  }
+  openFloat();
+};
+$('pf-go').onclick = () => {
+  db.preflightDone = true;
+  save();
+  $('preflight').hidden = true;
+  openFloat();
+};
+$('pf-cancel').onclick = () => ($('preflight').hidden = true);
 $('btn-unfloat').onclick = closeFloat;
 
 /* --- help --------------------------------------------------------------- */
-$('btn-help').onclick = () => ($('help').hidden = false);
-$('help-close').onclick = () => {
+let helpOpener = null;
+function openHelp() {
+  helpOpener = document.activeElement;
+  $('help').hidden = false;
+  $('help-close').focus();
+}
+function closeHelp() {
   $('help').hidden = true;
   db.seenHelp = true;
   save();
-};
+  if (helpOpener && helpOpener.focus) helpOpener.focus();
+  helpOpener = null;
+}
+$('btn-help').onclick = openHelp;
+$('help-close').onclick = closeHelp;
 $('help').addEventListener('click', (e) => {
-  if (e.target === $('help')) $('help-close').click();
+  if (e.target === $('help')) closeHelp();
+});
+$('preflight').addEventListener('click', (e) => {
+  if (e.target === $('preflight')) $('preflight').hidden = true;
 });
 
 /* --- keyboard ----------------------------------------------------------- */
 function onKey(e) {
+  // Escape is handled before the typing guard: it must work from anywhere.
+  if (e.key === 'Escape') {
+    if (!$('preflight').hidden) {
+      $('preflight').hidden = true;
+      return;
+    }
+    if (!$('help').hidden) {
+      closeHelp();
+      return;
+    }
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
+      return;
+    }
+    if (pipWindow) closeFloat();
+    return;
+  }
+
   const t = e.target;
   const typing =
     t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable);
@@ -1245,14 +1704,11 @@ function onKey(e) {
       break;
     case '+':
     case '=':
-      setSetting('fontSize', clamp(S.fontSize + 2, 14, 120));
+      setSetting('fontSize', clamp(S.fontSize + 2, 20, 120));
       break;
     case '-':
     case '_':
-      setSetting('fontSize', clamp(S.fontSize - 2, 14, 120));
-      break;
-    case 'Escape':
-      if (pipWindow) closeFloat();
+      setSetting('fontSize', clamp(S.fontSize - 2, 20, 120));
       break;
     default:
       break;
@@ -1279,22 +1735,22 @@ window.addEventListener('beforeunload', () => {
 (function init() {
   if (!pipSupported()) {
     $('btn-float').title =
-      'Your browser does not support always-on-top prompter windows. Chrome, Edge, Arc and Brave do.';
-    $('voice-tag').textContent = SpeechRec ? 'beta' : 'unavailable here';
-    if (!SpeechRec) $('voice-tag').classList.add('bad');
+      'This browser cannot open an always-on-top window. Chrome, Edge, Arc and Brave can.';
   }
+  window.CuelineIcons.paintIcons(document);
 
   renderLibrary();
   applySettings();
   renderScript();
   syncPlayButtons();
-  voiceStatus(
-    SpeechRec ? 'Off. Cueline scrolls at the speed you set.' : 'Not available in this browser.',
-    ''
-  );
-  if (S.voice) startVoice();
+  setVoiceStatus(SpeechRec ? 'off' : 'unsupported');
 
-  if (!db.seenHelp) $('help').hidden = false;
+  // One onboarding surface. The demo script in the prompter already explains
+  // the product; opening a modal wall on top of it said everything twice.
+  if (!db.seenHelp) {
+    db.seenHelp = true;
+    save();
+  }
 
   tickUI(true);
   scheduleFrame();
