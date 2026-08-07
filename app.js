@@ -748,19 +748,43 @@ async function openFloat() {
     );
   }
 
-  pipWindow = win;
-  styleInto(win);
-  win.document.body.appendChild(prompter);
+  // From here the prompter subtree lives in another document. If anything
+  // throws part-way through, put it back rather than leaving the page with
+  // no prompter in it.
+  try {
+    pipWindow = win;
+    styleInto(win);
+    win.document.body.appendChild(prompter);
 
-  win.addEventListener('pagehide', closeFloat);
-  win.addEventListener('unload', closeFloat);
-  win.addEventListener('resize', () => requestAnimationFrame(relayout));
-  win.document.addEventListener('keydown', onKey);
+    win.addEventListener('pagehide', closeFloat);
+    win.addEventListener('unload', closeFloat);
+    win.addEventListener('resize', () => requestAnimationFrame(relayout));
+    win.document.addEventListener('keydown', onKey);
+  } catch (err) {
+    pipWindow = null;
+    host.appendChild(prompter);
+    try {
+      win.close();
+    } catch {
+      /* ignore */
+    }
+    notify(
+      '<b>Could not open the floating prompter.</b> ' +
+        (err && err.message ? err.message : 'Unknown error.') +
+        ' The prompter is still here on the page — press <b>F</b> for full screen instead.',
+      'warn',
+      0
+    );
+    applySettings();
+    requestAnimationFrame(relayout);
+    return;
+  }
 
   $('floating-note').hidden = false;
   $('btn-float').classList.add('is-floating');
   $('btn-float').lastChild.textContent = ' Bring it back';
   applySettings();
+  scheduleFrame(); // hand the animation clock over to the floating window
   requestAnimationFrame(relayout);
 }
 
@@ -778,6 +802,7 @@ function closeFloat() {
     /* already gone */
   }
   applySettings();
+  scheduleFrame(); // take the animation clock back off the closed window
   requestAnimationFrame(relayout);
 }
 
@@ -802,30 +827,36 @@ function sameWord(a, b) {
  */
 function alignVoice(heard) {
   const tail = heard.slice(-6);
-  if (tail.length < 2 || !wordList.length) return null;
+  if (tail.length < 3 || !wordList.length) return null;
 
   const lo = Math.max(0, voiceCursor - 25);
   const hi = Math.min(wordList.length, voiceCursor + 160);
-  let best = { score: 0, end: -1 };
+  let best = { weighted: 0, raw: 0, end: -1 };
 
   for (let i = lo; i < hi; i++) {
-    let score = 0;
+    let raw = 0;
     let si = i;
     for (let j = 0; j < tail.length && si < wordList.length; j++) {
       if (sameWord(tail[j], wordList[si].norm)) {
-        score++;
+        raw++;
         si++;
       } else if (si + 1 < wordList.length && sameWord(tail[j], wordList[si + 1].norm)) {
         // absorb one skipped script word (a filler, a misheard article)
-        score++;
+        raw++;
         si += 2;
       }
     }
-    if (score > best.score) best = { score, end: si };
+    // Break ties toward where we already are. Without this, a run of common
+    // words ("and then the") scores equally in several places and the earliest
+    // candidate wins, yanking the prompter backwards across the script.
+    const weighted = raw * (1 - Math.min(1, Math.abs(i - voiceCursor) / 200) * 0.5);
+    if (weighted > best.weighted) best = { weighted, raw, end: si };
   }
 
-  const need = Math.max(2, Math.ceil(tail.length * 0.5));
-  return best.score >= need ? best.end : null;
+  // Bias strict. A missed match just holds position, which the reader will not
+  // even notice; a false match jumps them to the wrong line mid-sentence.
+  const need = Math.max(3, Math.ceil(tail.length * 0.6));
+  return best.raw >= need ? best.end : null;
 }
 
 function voiceStatus(text, cls) {
