@@ -19,6 +19,8 @@ const ICON_ATTRS =
   'aria-hidden="true" focusable="false"';
 
 const ICON_PATHS = {
+  'save':
+    '<path d="M5 4.75h9.5L19.25 9.5V18a1.25 1.25 0 0 1-1.25 1.25H5A1.25 1.25 0 0 1 3.75 18V6A1.25 1.25 0 0 1 5 4.75Z"/><path d="M7.5 4.75v4.5h7v-4.5M7.5 19.25v-5.5h9v5.5"/>',
   'new':
     '<path d="M12 5v14M5 12h14"/>',
   'open':

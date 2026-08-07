@@ -539,13 +539,15 @@ code {
 
 /*
  * A Picture-in-Picture window is a real operating-system window and is always
- * opaque. If the document declares no background, the browser paints its own
- * default — which is WHITE in a light-themed browser. Black here is not a
- * style choice; it is what stops the floating prompter flashing white in the
- * middle of a presentation.
+ * opaque. No web API — no CSS, no requestWindow option — can make the window
+ * itself see-through, so `background: transparent` here would simply reveal
+ * the browser's own base canvas (white in a light-themed browser). Black is
+ * therefore both the correct default and the closest thing to transparency
+ * that a web page can offer. Genuine see-through requires a native window.
  */
 body.pip-body {
   background: #000;
+  color-scheme: dark;
   overflow: hidden;
 }
 body.pip-body .prompter {
@@ -682,6 +684,77 @@ body.pip-body .prompter {
   color: var(--ink-3);
   font-weight: 500;
 }
+/*
+ * Sense lines. Each line is a phrase, broken where a speaker would break it,
+ * so the structure is visible in the layout before the eye arrives — which is
+ * when intonation and breath actually have to be planned.
+ */
+.p-content .sense {
+  display: block;
+}
+.prompter.run-on .p-content .sense {
+  display: inline;
+}
+
+/* Author-marked pauses: one bar for a breath, two for a full stop. Space is
+   what the eye reads; the bar is confirmation. */
+.p-content .sense[data-pause='1'] {
+  margin-bottom: 0.3em;
+}
+.p-content .sense[data-pause='2'] {
+  margin-bottom: 0.75em;
+}
+.p-content .sense[data-pause='1']::after,
+.p-content .sense[data-pause='2']::after {
+  content: '';
+  display: inline-block;
+  width: 1px;
+  height: 0.8em;
+  margin-left: 0.5em;
+  vertical-align: -0.08em;
+  background: currentColor;
+  opacity: 0.4;
+}
+.p-content .sense[data-pause='2']::after {
+  box-shadow: 4px 0 0 currentColor;
+}
+.prompter.run-on .p-content .sense[data-pause]::after {
+  margin-right: 0.25em;
+}
+
+/* Word addressing. <w> must be perfectly inert: it wraps every spoken word,
+   so any box the browser gives it would change the line breaking of the
+   entire script. */
+.p-content w {
+  display: inline;
+  font: inherit;
+  color: inherit;
+}
+
+/* Pronunciation guide, set above the word it belongs to. */
+.p-content ruby {
+  ruby-position: over;
+  ruby-align: center;
+}
+.p-content rt {
+  font-size: 0.42em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--ink-3);
+  text-transform: uppercase;
+  line-height: 1.1;
+  /* Never let a guide push the lines apart: the timing model and the
+     look-ahead guarantee are both computed from line height. */
+  margin-bottom: -0.2em;
+}
+
+/* Opt-in only, and off by default — see the note in the settings panel. */
+.p-content w.now {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
 /* Two channels, not one: weight alone does not survive a glance. */
 .blk b {
   font-weight: 800;
@@ -700,6 +773,11 @@ body.pip-body .prompter {
   color: inherit;
   text-decoration: none;
 }
+.prompter.emph-strong .blk mark {
+  color: #fff;
+  font-weight: 800;
+  letter-spacing: 0.012em;
+}
 .prompter.emph-underline .blk mark {
   color: #fff;
   text-decoration: underline;
@@ -716,10 +794,7 @@ body.pip-body .prompter {
   font-weight: 700;
   text-shadow: none;
 }
-.prompter.emph-amber .blk mark {
-  color: var(--live);
-  font-weight: 750;
-}
+
 .blk i {
   font-style: italic;
 }
@@ -773,7 +848,7 @@ body.pip-body .prompter {
   --spent-a: 0.24;
 }
 .prompter.focus-band .p-mask {
-  --ahead-floor: 0.35;
+  --ahead-floor: 0.55;
 }
 
 /* Reading marks: neutral while parked, amber only while rolling. */

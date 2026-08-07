@@ -37,9 +37,15 @@ them.
 > Lines beginning with a chevron are notes to yourself. They are dimmed, never
 > spoken, and never counted toward the timing.
 
+Lines break where a phrase breaks, / not where the column runs out, so the shape
+of a sentence is visible before you reach it. // A single slash marks a breath.
+A double slash marks a full stop. Both are charged to the running time, because
+silence is time.
+
 Wrap a phrase in double equals to mark it as a word to hit: this proposal is
-==not a request for more funding==. Stressed words are drawn so they carry in
-peripheral vision, and you can change how in Settings.
+==not a request for more funding==. Put a respelling in braces after a name you
+must not fumble — Kyrgyzstan{KEER-gih-STAN} — and it is set above the word,
+shown but never spoken. [Square brackets hold a direction to yourself.]
 
 Set a target length above the script and the pace field reports your drift
 against it as you speak. Speed is stated in words per minute, so the figure
@@ -76,7 +82,10 @@ const DEFAULTS = {
   measureEm: 17,
   flip: false,
   background: 'dim',
-  emphasis: 'underline',
+  emphasis: 'strong',
+  senseLines: true,
+  lookaheadSeconds: 2.8,
+  focusWord: false,
   readingLine: 0.38,
   focusBand: true,
   showMarks: true,
@@ -272,6 +281,11 @@ function renderScript() {
     })
     .join('');
 
+  // Word elements are cached once per render. Highlighting then costs two
+  // class toggles per change rather than a query per frame.
+  wordEls = Array.from(pContent.querySelectorAll('w[data-w]'));
+  litWord = -1;
+
   pEmpty.hidden = doc.totalWords > 0 || doc.blocks.some((b) => b.type !== 'empty');
   measure();
   renderScrubMarks();
@@ -298,6 +312,25 @@ function measure() {
     pContent.offsetHeight - readingPx - Math.max(0, vh - readingPx)
   );
   layout = { textHeight, maxY: textHeight, readingPx, tops, heights };
+
+  /*
+   * Guarantee the look-ahead.
+   *
+   * The eye runs ahead of the voice to the end of the current phrase and then
+   * waits, so full-brightness text below the reading line is not decoration —
+   * it is the input to the next intonation and breath decision. Sizing it as a
+   * fixed multiple of the line height meant the guarantee silently varied with
+   * type size, window height and speed. It is now expressed in the only unit
+   * that means anything here: seconds of speech at the current rate.
+   */
+  const perWord = doc.totalWords && textHeight ? textHeight / doc.totalWords : 0;
+  const pxPerSecond = perWord ? (S.wpm / 60) * perWord : 0;
+  const lineH = S.fontSize * S.lineHeight;
+  const room = Math.max(0, vh - readingPx - 44);
+  const wanted = pxPerSecond * S.lookaheadSeconds;
+  const plateau = clamp(wanted || lineH * 2.4, Math.min(lineH * 1.6, room), room);
+  layout.lookaheadSeconds = pxPerSecond ? plateau / pxPerSecond : 0;
+  prompter.style.setProperty('--plateau', readingPx + plateau + 'px');
   y = clamp(y, 0, layout.maxY);
   paint();
 }
@@ -313,6 +346,18 @@ function measure() {
  */
 function paint() {
   pContent.style.transform = `translate3d(0, ${-y}px, 0)`;
+}
+
+/** Cached <w> elements, index-aligned with the global word index. */
+let wordEls = [];
+let litWord = -1;
+
+/** Light exactly one word. Called every frame, so it must stay this cheap. */
+function highlightWord(i) {
+  if (i === litWord) return;
+  if (wordEls[litWord]) wordEls[litWord].classList.remove('now');
+  if (i >= 0 && wordEls[i]) wordEls[i].classList.add('now');
+  litWord = i;
 }
 
 /* ------------------------------------------------------- position ↔ words */
@@ -624,6 +669,8 @@ function tickUI(force) {
   if (!force && now - uiLast < 100) return;
   uiLast = now;
 
+  if (S.focusWord) highlightWord(Math.round(currentWord()));
+
   updateTally();
   if (VAD.stream && !$('settings').hidden && !$('voice-mic-row').hidden) {
     // Map roughly -70..-15 dBFS onto the bar.
@@ -771,7 +818,11 @@ function applySettings() {
   r.setProperty('--reading', Math.round(S.readingLine * 100) + '%');
   r.setProperty('--weight', String(S.weight));
   r.setProperty('--align', S.align);
-  r.setProperty('--measure', S.measureEm + 'em');
+  // With sense lines on, the phrase governs the line length, so the measure
+  // cap becomes redundant — and actively harmful, because a phrase wider than
+  // the cap wraps mid-phrase, reintroducing exactly the arbitrary break the
+  // sense breaks removed. Widen it enough to hold the longest phrase.
+  r.setProperty('--measure', (S.senseLines ? Math.max(S.measureEm, 25) : S.measureEm) + 'em');
   if (pipWindow) {
     // The floating window has its own document, so it needs the same variables.
     const pr = pipWindow.document.documentElement.style;
@@ -781,7 +832,7 @@ function applySettings() {
     pr.setProperty('--reading', Math.round(S.readingLine * 100) + '%');
     pr.setProperty('--weight', String(S.weight));
     pr.setProperty('--align', S.align);
-    pr.setProperty('--measure', S.measureEm + 'em');
+    pr.setProperty('--measure', (S.senseLines ? Math.max(S.measureEm, 25) : S.measureEm) + 'em');
   }
 
   prompter.className =
@@ -794,6 +845,7 @@ function applySettings() {
     (S.focusBand ? ' focus-band' : '') +
     (S.showMarks ? ' show-marks' : '') +
     (S.dimSpent ? ' dim-spent' : '') +
+    (S.senseLines ? '' : ' run-on') +
     (S.mirror ? ' mirror' : '') +
     (S.flip ? ' flip' : '') +
     (playing ? ' rolling' : '') +
@@ -821,11 +873,15 @@ function applySettings() {
   setRange('pipW', S.pipW);
   setRange('pipH', S.pipH);
   setRange('measureEm', S.measureEm);
+  setRange('lookaheadSeconds', S.lookaheadSeconds, (v) => Number(v).toFixed(1) + 's');
 
   segSync('s-fontFamily', S.fontFamily);
   segSync('s-align', S.align);
   segSync('s-background', S.background);
   segSync('s-emphasis', S.emphasis);
+  $('s-senseLines').checked = S.senseLines;
+  $('s-focusWord').checked = S.focusWord;
+  if (!S.focusWord) highlightWord(-1);
   $('clear-hint').hidden = S.background !== 'clear';
 
   $('s-focusBand').checked = S.focusBand;
@@ -864,6 +920,7 @@ function relayout() {
   paint();
   renderScrubMarks();
   updateSizeHint();
+  updateLookaheadHint();
 }
 
 /**
@@ -871,6 +928,18 @@ function relayout() {
  * slider stops having any visible effect. Say so, rather than letting the
  * control look broken.
  */
+function updateLookaheadHint() {
+  const n = $('lookahead-hint');
+  if (!n) return;
+  const got = layout.lookaheadSeconds || 0;
+  const short = got < S.lookaheadSeconds - 0.15;
+  n.textContent = short
+    ? `Only ${got.toFixed(1)}s of script fits below the reading line at this size. ` +
+      'Reduce the type size, raise the reading line, or make the window taller.'
+    : `${got.toFixed(1)}s of speech is visible below the reading line.`;
+  n.className = 'hint' + (short ? ' bad' : '');
+}
+
 function updateSizeHint() {
   const n = $('size-hint');
   if (!n) return;
@@ -948,6 +1017,18 @@ function pipSupported() {
 }
 
 function styleInto(win) {
+  // Declare the colour scheme before anything paints. A Picture-in-Picture
+  // window is a real operating-system window with its own opaque canvas; if
+  // the document declares nothing, the browser paints its default base, which
+  // is WHITE in a light-themed browser. This is what removes the flash on
+  // open — the explicit black background below only takes effect once the
+  // stylesheet has arrived.
+  const meta = win.document.createElement('meta');
+  meta.name = 'color-scheme';
+  meta.content = 'dark';
+  win.document.head.appendChild(meta);
+  win.document.documentElement.style.background = '#000';
+
   const link = win.document.createElement('link');
   link.rel = 'stylesheet';
   // Copy this page's own stylesheet URL, version query and all, so the
@@ -1800,6 +1881,22 @@ async function loadScriptFile(file) {
   loadScript(s.id);
 }
 
+// Import without export makes the app a one-way door — and save() already
+// ships a message telling you to copy your script somewhere safe.
+$('btn-export').onclick = () => {
+  const s = active();
+  const name = (s.name || 'script').replace(/[^\w\- ]+/g, '').trim() || 'script';
+  const blob = new Blob([s.text || ''], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = name + '.md';
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+};
+
 $('btn-import').onclick = () => $('file-input').click();
 $('file-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
@@ -1825,6 +1922,7 @@ const RANGES = {
   weight: (v) => Math.round(v),
   paddingX: (v) => Math.round(v),
   readingLine: (v) => Number(v),
+  lookaheadSeconds: (v) => Number(v),
   measureEm: (v) => Number(v),
   countdown: (v) => Math.round(v),
   pipW: (v) => Math.round(v),
@@ -1842,6 +1940,8 @@ for (const [key, cast] of Object.entries(RANGES)) {
 
 const CHECKS = {
   focusBand: 'focusBand',
+  senseLines: 'senseLines',
+  focusWord: 'focusWord',
   showMarks: 'showMarks',
   dimSpent: 'dimSpent',
   mirror: 'mirror',

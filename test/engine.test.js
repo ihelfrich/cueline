@@ -97,8 +97,14 @@ section('Parser — inline formatting and escaping');
 
 {
   const html = CuelineScript.parse('**bold** and *em* and <script>alert(1)</script>').blocks[0].html;
-  assert('bold renders', html.includes('<b>bold</b>'), html);
-  assert('italic renders', html.includes('<i>em</i>'), html);
+  // Words are wrapped in <w> spans for addressing, so assert on the text
+  // inside each formatting element rather than on a literal markup string.
+  const inside = (tag, h) => {
+    const m = new RegExp('<' + tag + '>([\\s\\S]*?)<\\/' + tag + '>').exec(h);
+    return m ? m[1].replace(/<[^>]*>/g, '') : null;
+  };
+  check('bold wraps its word', inside('b', html), 'bold');
+  check('italic wraps its word', inside('i', html), 'em');
   assert('script tags are escaped, not executed', html.includes('&lt;script&gt;') && !html.includes('<script>'), html);
 }
 
@@ -109,7 +115,9 @@ section('Parser — inline formatting and escaping');
 
 {
   const html = CuelineScript.parse('Hit ==this word== hard.').blocks[0].html;
-  assert('stress renders as a mark', html.includes('<mark>this word</mark>'), html);
+  const marked = /<mark>([\s\S]*?)<\/mark>/.exec(html);
+  check('stress wraps exactly the marked phrase',
+    marked && marked[1].replace(/<[^>]*>/g, ''), 'this word');
   check('stress markers do not inflate the word count', CuelineScript.parse('Hit ==this word== hard.').totalWords, 4);
   const esc = CuelineScript.parse('==<img src=x onerror=alert(1)>==').blocks[0].html;
   assert('stress content is still escaped', esc.includes('&lt;img') && !esc.includes('<img'), esc);
@@ -123,6 +131,117 @@ section('Parser — inline formatting and escaping');
   const d = CuelineScript.parse('1. first item\n2) second item');
   check('numbered lists parse as list items', d.blocks.map((b) => b.type), ['li', 'li']);
   check('numbered markers are kept', d.blocks.map((b) => b.marker), ['1.', '2.']);
+}
+
+section('Word addressing — every spoken word is individually reachable');
+
+{
+  const d = CuelineScript.parse('Hit ==this word== hard.\n\nSecond para here.');
+  const ws = (h) => [...h.matchAll(/<w data-w="(\d+)">([^<]*)<\/w>/g)].map((m) => [Number(m[1]), m[2]]);
+
+  check('word indices run continuously across blocks',
+    d.blocks.flatMap((b) => ws(b.html)).map((w) => w[0]), [0, 1, 2, 3, 4, 5, 6]);
+  check('the block word count equals the spans emitted',
+    d.blocks.map((b) => b.words), [4, 3]);
+  check('wordsBefore lines up with the first span of each block',
+    d.blocks.map((b) => b.wordsBefore), [0, 4]);
+
+  // Formatting must wrap the words, not the other way round, or a multi-word
+  // stress mark would render as separate underlines with gaps at the spaces.
+  assert('inline formatting survives and contains the word spans',
+    /<mark><w data-w="1">this<\/w> <w data-w="2">word<\/w><\/mark>/.test(d.blocks[0].html),
+    d.blocks[0].html);
+  assert('markers themselves are never wrapped as words',
+    !/<w[^>]*>==/.test(d.blocks[0].html), d.blocks[0].html);
+}
+
+{
+  // The emitter is the counter, so even a word split by formatting stays
+  // self-consistent between the DOM and the timing model.
+  const d = CuelineScript.parse('un**believable** result');
+  const spans = [...d.blocks[0].html.matchAll(/data-w="(\d+)"/g)].length;
+  check('span count equals the reported word count', spans, d.blocks[0].words);
+  check('totalWords agrees with the spans emitted', d.totalWords, spans);
+}
+
+{
+  const d = CuelineScript.parse('# Heading\n> a cue\nSpoken words here.');
+  const spanned = d.blocks.filter((b) => /data-w=/.test(b.html)).map((b) => b.type);
+  check('headings and cues carry no word spans', spanned, ['p']);
+}
+
+section('Source ranges — a rendered word can be traced back to the script');
+
+{
+  const src = 'First line here\nsecond line joined.\n\n- a bullet item\n';
+  const d = CuelineScript.parse(src);
+  d.blocks.forEach((b) => {
+    if (!b.ranges) return;
+    const rebuilt = b.ranges.map((r) => src.slice(r.start, r.end)).join(' ');
+    check(`${b.type} block rebuilds exactly from its source ranges`, rebuilt, b.text);
+  });
+  assert('paragraphs record one range per source line', d.blocks[0].ranges.length === 2,
+    JSON.stringify(d.blocks[0].ranges));
+}
+
+section('Say-it marks — silent text must never reach the clock');
+
+{
+  // A stage direction is displayed but not spoken. It used to be counted,
+  // which charged the timing model for words the speaker never says.
+  const d = CuelineScript.parse('Say five words here now [pause and look up] and then continue.');
+  check('a stage direction costs no words', d.totalWords, 8);
+  assert('the direction still renders as an aside',
+    /<span class="aside">\[pause and look up\]<\/span>/.test(d.blocks[0].html), d.blocks[0].html);
+  assert('no word index is spent inside the direction',
+    !/data-w[^>]*>pause/.test(d.blocks[0].html), d.blocks[0].html);
+}
+
+{
+  const d = CuelineScript.parse('Welcome to Kyrgyzstan{KEER-gih-STAN} today.');
+  assert('a respelling sets as ruby above the word',
+    /<ruby><w data-w="2">Kyrgyzstan<\/w><rt>KEER-gih-STAN<\/rt><\/ruby>/.test(d.blocks[0].html),
+    d.blocks[0].html);
+  check('the respelling costs no words', d.totalWords, 4);
+  assert('no word index is spent inside the respelling',
+    !/data-w[^>]*>KEER/.test(d.blocks[0].html), d.blocks[0].html);
+}
+
+{
+  // Whatever the markup, the spans emitted and the count reported must agree,
+  // because screen position and the timing model are derived from both.
+  const samples = [
+    'Plain words only here.',
+    'Mixed ==stress== and **bold** and *em*.',
+    'Name{RES-pell} plus [a direction] plus / a pause.',
+    'un**believable** split word',
+  ];
+  const bad = samples.filter((src) => {
+    const d = CuelineScript.parse(src);
+    const spans = [...d.blocks[0].html.matchAll(/data-w="/g)].length;
+    return spans !== d.blocks[0].words;
+  });
+  check('spans and word counts agree on every markup combination', bad, []);
+}
+
+section('Sense lines');
+
+{
+  const d = CuelineScript.parse('Colleagues, the figure is not a request. / It is permission to stop. // Thank you.');
+  const g = d.blocks[0].senses;
+  assert('a paragraph is broken into phrases', g.length >= 3, JSON.stringify(g.map((x) => x.text)));
+  assert('no phrase exceeds the glance limit', g.every((x) => x.text.split(' ').length <= 9),
+    JSON.stringify(g.map((x) => x.text)));
+  assert('an author breath mark is retained', g.some((x) => x.pause === 1), JSON.stringify(g));
+  assert('an author full stop is retained', g.some((x) => x.pause === 2), JSON.stringify(g));
+  assert('marked pauses are budgeted as real time', d.pauseSeconds > 1, String(d.pauseSeconds));
+  assert('pause marks are not spoken', !/data-w[^>]*>\/</.test(d.blocks[0].html), d.blocks[0].html);
+}
+
+{
+  const d = CuelineScript.parse('A direction [that runs on for quite a few words indeed] stays whole.');
+  const inside = d.blocks[0].senses.filter((g) => /\[/.test(g.text) && !/\]/.test(g.text));
+  check('a sense break never falls inside a direction', inside, []);
 }
 
 section('Clock formatting');

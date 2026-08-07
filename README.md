@@ -64,12 +64,50 @@ Plain text, close enough to Markdown that your script stays readable anywhere.
 | `# Heading` | a section you can jump between |
 | `> Cue` | a note to yourself — dimmed, never counted in the timing |
 | `---` | a divider, e.g. "advance the slide" |
-| `==stress==` | a word to hit — underlined, blocked or amber, your choice |
+| `==stress==` | a word to hit |
+| `/` and `//` | a breath, and a full stop — both charged to the running time |
+| `Name{NAY-muh}` | how to say it, set above the word, shown but never spoken |
+| `[direction]` | a note to yourself mid-line — shown, never spoken |
 | `**bold**` `*italic*` | emphasis |
 | `- item` | a bullet |
 
-Cues and headings are deliberately excluded from the word count, so your timing
-reflects what you will actually say out loud.
+Nothing the prompter shows as unspoken is counted: headings, cues, directions
+and pronunciation guides are all excluded, so the timing reflects only what you
+will actually say. Marked pauses are the opposite — they are silence you will
+really take, so they are added to the running time.
+
+### Sense lines
+
+Lines break where a phrase breaks, not where the column runs out.
+
+This is how broadcast copy has been set for sixty years, and the reading
+research agrees on why. When you read aloud your eye runs ahead of your voice to
+the end of the current phrase and then waits — the eye-voice span (Buswell 1920;
+Levin & Turner 1968; Laubrock & Kliegl 2015). The unit it buffers is the phrase,
+because intonation, phrase-final lengthening and breath are all planned over a
+whole phrase. Breaking at the container edge hands you the phrase boundary as it
+arrives, which is a phrase too late to plan anything.
+
+Cueline breaks at terminal punctuation, at clause boundaries, and before
+conjunctions and prepositions, capping a line at nine words. You can override it
+with `/` and `//` anywhere.
+
+### On highlighting the word you are saying
+
+There is a setting for it. It is off, and it should stay off.
+
+Marking the current word tells your eye to go where your voice already is — it
+drives the eye-voice span toward zero, which is the measured signature of an
+unskilled oral reader: flat pitch, breath in the wrong places. A moving
+highlight is also one of the strongest involuntary attention cues there is, so
+it is not a suggestion your eye can decline. And the mark would often be wrong:
+in timed mode the position is inferred from a clock, and in word-follow mode the
+tracker knows the *trailing* edge of what you have said, so the mark would sit
+behind your eye and pull it backwards.
+
+The parts of speed-reading that do transfer to reading aloud — a fixed reading
+position, an externally imposed rate, and a short line — are already the three
+things this product is built on.
 
 ### Keyboard
 
