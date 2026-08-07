@@ -19,6 +19,12 @@ const ICON_ATTRS =
   'aria-hidden="true" focusable="false"';
 
 const ICON_PATHS = {
+  'new':
+    '<path d="M12 5v14M5 12h14"/>',
+  'open':
+    '<path d="M3 7.5A1.5 1.5 0 0 1 4.5 6h4.2a1.5 1.5 0 0 1 1.2.6l1 1.4h7.6A1.5 1.5 0 0 1 20 9.5V18a1.5 1.5 0 0 1-1.5 1.5h-14A1.5 1.5 0 0 1 3 18Z"/>',
+  'delete':
+    '<path d="M4.5 7h15M9.5 7V5.2A1.2 1.2 0 0 1 10.7 4h2.6a1.2 1.2 0 0 1 1.2 1.2V7M6.5 7l.8 11.3A1.5 1.5 0 0 0 8.8 19.7h6.4a1.5 1.5 0 0 0 1.5-1.4L17.5 7M10.5 11v5M13.5 11v5"/>',
   'play':
     '<path d="M9 6.5 18 12 9 17.5Z" fill="currentColor" stroke="currentColor"/>',
   'pause':

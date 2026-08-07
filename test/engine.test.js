@@ -235,6 +235,97 @@ section('Voice follow — alignment matcher');
   assert('re-acquires a reader who jumped far ahead', reacquired !== null && reacquired.end > 15, JSON.stringify(reacquired));
 }
 
+section('Reading-position anchor — re-measuring must not move the script');
+
+{
+  // captureAnchor/restoreAnchor are the round trip that runs on every window
+  // resize, every settings slider, and — the one that matters — on floating
+  // and unfloating the prompter. They depend only on `doc`, `layout` and `y`,
+  // so they can be lifted out and driven against a synthetic layout.
+  const lab = new Function(
+    `
+    let y = 0;
+    let doc = { blocks: [], totalWords: 0 };
+    let layout = { tops: [], heights: [], readingPx: 0, maxY: 0, textHeight: 0 };
+    const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    ${extractFn(appSrc, 'blockAt')}
+    ${extractFn(appSrc, 'yForWord')}
+    ${extractFn(appSrc, 'captureAnchor')}
+    ${extractFn(appSrc, 'restoreAnchor')}
+    return {
+      set(d, l, yy) { doc = d; layout = l; y = yy; },
+      y: () => y,
+      setY(v) { y = v; },
+      blockAt: (v) => blockAt(v),
+      yForWord: (w) => yForWord(w),
+      capture: () => captureAnchor(),
+      restore: (a) => { restoreAnchor(a); return y; },
+    };
+  `
+  )();
+
+  // A paragraph, then the shape that used to break it: heading, cue, rule,
+  // then the paragraph they introduce. All four zero-word blocks share the
+  // same wordsBefore as that paragraph.
+  const mk = (type, words) => ({ type, words });
+  const blocks = [mk('p', 10), mk('h', 0), mk('cue', 0), mk('rule', 0), mk('p', 10)];
+  let running = 0;
+  blocks.forEach((b, i) => {
+    b.index = i;
+    b.wordsBefore = running;
+    running += b.words;
+  });
+  const doc = { blocks, totalWords: running };
+
+  const layoutAt = (scale) => {
+    const heights = [200, 60, 80, 30, 200].map((h) => h * scale);
+    const tops = [];
+    let acc = 150 * scale; // padding-top === readingPx
+    heights.forEach((h, i) => {
+      tops[i] = acc;
+      acc += h;
+    });
+    const readingPx = 150 * scale;
+    return { tops, heights, readingPx, maxY: acc, textHeight: acc };
+  };
+
+  const before = layoutAt(1);
+  const after = layoutAt(1.35); // a re-measure that changes every dimension
+
+  const names = ['paragraph', 'heading', 'cue', 'rule', 'paragraph after the rule'];
+  let worstDrift = 0;
+  const strayed = [];
+
+  blocks.forEach((b, i) => {
+    // Park the reading line a third of the way into block i.
+    lab.set(doc, before, before.tops[i] + before.heights[i] * 0.33 - before.readingPx);
+    const anchor = lab.capture();
+    lab.set(doc, after, lab.y());
+    const restored = lab.restore(anchor);
+
+    // Which block is under the reading line now?
+    const landed = lab.blockAt(restored);
+    if (landed !== i) strayed.push(`${names[i]} -> ${names[landed] || landed}`);
+    const want = after.tops[i] + after.heights[i] * 0.33 - after.readingPx;
+    worstDrift = Math.max(worstDrift, Math.abs(restored - want));
+  });
+
+  check('every block type survives a re-measure on its own line', strayed, []);
+  assert('restored position is exact, not approximate', worstDrift < 0.001, `worst drift ${worstDrift}px`);
+
+  // The regression this replaced: a word-index round trip cannot distinguish
+  // the zero-word blocks from the paragraph that follows them, because all
+  // four carry the same wordsBefore.
+  lab.set(doc, before, before.tops[1] - before.readingPx); // parked on the heading
+  const wordAnchor = 10; // wordsBefore shared by heading, cue, rule and the next p
+  const wordRestored = lab.yForWord(wordAnchor);
+  assert(
+    'yForWord only ever resolves to a block that contains words',
+    lab.blockAt(wordRestored) === 4,
+    `resolved to block ${lab.blockAt(wordRestored)}`
+  );
+}
+
 section('Easing');
 
 {

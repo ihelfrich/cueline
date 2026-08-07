@@ -119,13 +119,25 @@ function loadStore() {
 
 const db = loadStore();
 let saveTimer = null;
+let saveFailed = false;
 function save() {
   clearTimeout(saveTimer);
   saveTimer = setTimeout(() => {
     try {
       localStorage.setItem(STORE_KEY, JSON.stringify(db));
+      saveFailed = false;
     } catch {
-      /* private mode, quota — the app still works for this session */
+      // Private mode, or quota. The session still works, but silently losing
+      // persistence is not something to discover after the fact.
+      if (!saveFailed) {
+        saveFailed = true;
+        notify(
+          '<b>Your work is no longer being saved in this browser.</b> Storage is full or ' +
+            'blocked. Copy your script somewhere safe before closing this tab.',
+          'warn',
+          0
+        );
+      }
     }
   }, 200);
 }
@@ -340,16 +352,38 @@ function currentWord() {
   return b.wordsBefore + within * b.words;
 }
 
+/**
+ * Position of a spoken word. Only blocks that actually contain words are
+ * candidates, so the zero-word blocks that share a wordsBefore value with the
+ * paragraph after them (headings, cues, rules) can never be selected.
+ */
 function yForWord(w) {
-  for (let i = doc.blocks.length - 1; i >= 0; i--) {
+  for (let i = 0; i < doc.blocks.length; i++) {
     const b = doc.blocks[i];
-    if (b.wordsBefore <= w) {
-      const frac = b.words ? clamp((w - b.wordsBefore) / b.words, 0, 1) : 0;
+    if (b.words > 0 && w < b.wordsBefore + b.words) {
+      const frac = clamp((w - b.wordsBefore) / b.words, 0, 1);
       const top = (layout.tops[i] || 0) + frac * (layout.heights[i] || 0);
       return clamp(top - layout.readingPx, 0, layout.maxY);
     }
   }
-  return 0;
+  return layout.maxY;
+}
+
+/**
+ * Where the reader is, expressed structurally: which block is on the reading
+ * line and how far into it. Unlike a word index this is exact for every block
+ * type, so re-measuring cannot silently move the script.
+ */
+function captureAnchor() {
+  const i = blockAt(y);
+  const h = layout.heights[i] || 1;
+  return { block: i, frac: clamp((y + layout.readingPx - (layout.tops[i] || 0)) / h, 0, 1) };
+}
+
+function restoreAnchor(a) {
+  if (!a || layout.tops[a.block] === undefined) return;
+  const top = layout.tops[a.block] + a.frac * (layout.heights[a.block] || 0);
+  y = clamp(top - layout.readingPx, 0, layout.maxY);
 }
 
 /* ==========================================================================
@@ -362,7 +396,7 @@ async function setPlaying(next) {
 
   playing = next;
   if (playing) {
-    runResumedAt = Date.now();
+    runResumedAt = null; // stamped after the countdown, below
   } else if (runResumedAt) {
     runAccumMs += Date.now() - runResumedAt;
     runResumedAt = null;
@@ -394,6 +428,9 @@ async function setPlaying(next) {
     P.countdown.hidden = true;
     countingDown = false;
   }
+
+  // Only now does the script actually move, so only now does the clock start.
+  if (playing && !runResumedAt) runResumedAt = Date.now();
 }
 
 function togglePlay() {
@@ -496,6 +533,16 @@ let rafGen = 0;
 let rafWin = window;
 let lastTickAt = 0;
 
+/** requestAnimationFrame on whichever window currently holds the prompter. */
+function hostRaf(fn) {
+  const w = pipWindow && !pipWindow.closed ? pipWindow : window;
+  try {
+    return w.requestAnimationFrame(fn);
+  } catch {
+    return window.requestAnimationFrame(fn);
+  }
+}
+
 function scheduleFrame() {
   const w = pipWindow && !pipWindow.closed ? pipWindow : window;
   if (w !== rafWin) {
@@ -592,6 +639,12 @@ function tickUI(force) {
 
   $('scrub-fill').style.width = frac * 100 + '%';
   $('scrub-knob').style.left = frac * 100 + '%';
+  const sc = $('scrub');
+  const pc = Math.round(frac * 100);
+  if (sc.getAttribute('aria-valuenow') !== String(pc)) {
+    sc.setAttribute('aria-valuenow', String(pc));
+    sc.setAttribute('aria-valuetext', pc + '%, ' + formatClock(remaining) + ' remaining');
+  }
 
   const elapsed = runElapsed();
   $('t-elapsed').textContent = formatClock(elapsed);
@@ -796,13 +849,18 @@ function applySettings() {
 function segSync(id, value) {
   const seg = $(id);
   if (!seg) return;
-  seg.querySelectorAll('button').forEach((b) => b.classList.toggle('is-on', b.dataset.v === value));
+  seg.querySelectorAll('button').forEach((b) => {
+    const on = b.dataset.v === value;
+    b.classList.toggle('is-on', on);
+    b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(on));
+  });
 }
 
 function relayout() {
-  const anchor = currentWord();
+  const anchor = captureAnchor();
   measure();
-  y = yForWord(anchor);
+  restoreAnchor(anchor);
   paint();
   renderScrubMarks();
   updateSizeHint();
@@ -829,7 +887,7 @@ function updateSizeHint() {
 function setSetting(key, value, { relayout: needsLayout = true } = {}) {
   S[key] = value;
   applySettings();
-  if (needsLayout) requestAnimationFrame(relayout);
+  if (needsLayout) hostRaf(relayout);
 }
 
 /* ==========================================================================
@@ -961,7 +1019,7 @@ async function openFloat() {
 
     win.addEventListener('pagehide', closeFloat);
     win.addEventListener('unload', closeFloat);
-    win.addEventListener('resize', () => requestAnimationFrame(relayout));
+    win.addEventListener('resize', () => hostRaf(relayout));
     win.document.addEventListener('keydown', onKey);
   } catch (err) {
     pipWindow = null;
@@ -979,7 +1037,7 @@ async function openFloat() {
       0
     );
     applySettings();
-    requestAnimationFrame(relayout);
+    hostRaf(relayout);
     return;
   }
 
@@ -988,7 +1046,7 @@ async function openFloat() {
   $('float-label').textContent = 'Bring it back';
   applySettings();
   scheduleFrame(); // hand the animation clock over to the floating window
-  requestAnimationFrame(relayout);
+  hostRaf(relayout);
 }
 
 function closeFloat() {
@@ -1006,7 +1064,7 @@ function closeFloat() {
   }
   applySettings();
   scheduleFrame(); // take the animation clock back off the closed window
-  requestAnimationFrame(relayout);
+  hostRaf(relayout);
 }
 
 /* ==========================================================================
@@ -1586,8 +1644,20 @@ $('scrub').addEventListener('pointerdown', (e) => {
 $('scrub').addEventListener('pointermove', (e) => scrubbing && scrubTo(e.clientX));
 $('scrub').addEventListener('pointerup', () => (scrubbing = false));
 $('scrub').addEventListener('keydown', (e) => {
-  if (e.key === 'ArrowLeft') nudge(-1);
-  else if (e.key === 'ArrowRight') nudge(1);
+  const step = { ArrowLeft: -1, ArrowRight: 1, ArrowDown: -1, ArrowUp: 1 };
+  if (e.key in step) {
+    e.preventDefault();
+    nudge(step[e.key]);
+  } else if (e.key === 'Home') {
+    e.preventDefault();
+    glideTo(0);
+  } else if (e.key === 'End') {
+    e.preventDefault();
+    glideTo(layout.maxY);
+  } else if (e.key === 'PageUp' || e.key === 'PageDown') {
+    e.preventDefault();
+    jumpSection(e.key === 'PageDown' ? 1 : -1);
+  }
 });
 
 /* --- dragging / wheel on the prompter ----------------------------------- */
@@ -1596,7 +1666,11 @@ pViewport.addEventListener(
   (e) => {
     e.preventDefault();
     cancelGlide();
-    y = clamp(y + e.deltaY, 0, layout.maxY);
+    // deltaMode 1 is lines and 2 is pages; Firefox uses lines by default, so
+    // an unscaled deltaY moves the script by about three pixels per notch.
+    const unit =
+      e.deltaMode === 1 ? S.fontSize * S.lineHeight : e.deltaMode === 2 ? pViewport.clientHeight : 1;
+    y = clamp(y + e.deltaY * unit, 0, layout.maxY);
     paint();
     voiceResync();
   },
@@ -1629,9 +1703,9 @@ editor.addEventListener('input', () => {
   active().text = editor.value;
   clearTimeout(editTimer);
   editTimer = setTimeout(() => {
-    const anchor = currentWord();
+    const anchor = captureAnchor();
     renderScript();
-    y = clamp(yForWord(anchor), 0, layout.maxY);
+    restoreAnchor(anchor);
     paint();
     voiceResync();
     save();
@@ -1697,37 +1771,50 @@ $('btn-delete').onclick = () => {
   });
 };
 
-$('btn-import').onclick = () => $('file-input').click();
-$('file-input').addEventListener('change', async (e) => {
-  const file = e.target.files[0];
-  if (!file) return;
+
+/** Shared guard for both ways a file can arrive. */
+const MAX_SCRIPT_BYTES = 2 * 1024 * 1024;
+
+async function loadScriptFile(file) {
+  const named = /\.(txt|md|markdown)$/i.test(file.name || '');
+  if (file.type && !file.type.startsWith('text/') && !named) {
+    notify(`<b>${escapeText(file.name || 'That file')}</b> is not a text file.`, 'warn');
+    return;
+  }
+  if (file.size > MAX_SCRIPT_BYTES) {
+    notify(
+      `<b>${escapeText(file.name)}</b> is ${(file.size / 1048576).toFixed(1)} MB. ` +
+        'Scripts are capped at 2 MB — anything larger would not fit in browser storage.',
+      'warn'
+    );
+    return;
+  }
   const text = await file.text();
   const s = {
     id: 's' + Date.now().toString(36),
-    name: file.name.replace(/\.(txt|md|markdown)$/i, ''),
+    name: (file.name || 'Untitled').replace(/\.(txt|md|markdown)$/i, ''),
     text,
     targetMin: 0,
   };
   db.scripts.unshift(s);
   loadScript(s.id);
+}
+
+$('btn-import').onclick = () => $('file-input').click();
+$('file-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (file) await loadScriptFile(file);
   e.target.value = '';
 });
 
 // Drop a file anywhere on the page.
 document.addEventListener('dragover', (e) => e.preventDefault());
 document.addEventListener('drop', async (e) => {
-  const file = e.dataTransfer && e.dataTransfer.files[0];
-  if (!file) return;
+  // Unconditionally, and first: otherwise dropping a link or selected text
+  // navigates the page and destroys a running prompter.
   e.preventDefault();
-  const text = await file.text();
-  const s = {
-    id: 's' + Date.now().toString(36),
-    name: file.name.replace(/\.(txt|md|markdown)$/i, ''),
-    text,
-    targetMin: 0,
-  };
-  db.scripts.unshift(s);
-  loadScript(s.id);
+  const file = e.dataTransfer && e.dataTransfer.files[0];
+  if (file) await loadScriptFile(file);
 });
 
 /* --- settings ----------------------------------------------------------- */
@@ -1823,7 +1910,7 @@ for (const [id, key] of [
 $('btn-reset').onclick = () => {
   Object.assign(S, DEFAULTS);
   applySettings();
-  requestAnimationFrame(relayout);
+  hostRaf(relayout);
 };
 
 function toggleSettings(open) {
@@ -1832,7 +1919,7 @@ function toggleSettings(open) {
   $('btn-settings').setAttribute('aria-expanded', String(next));
   $('btn-settings').classList.toggle('on', next);
   applySettings();
-  requestAnimationFrame(relayout);
+  hostRaf(relayout);
 }
 $('btn-settings').onclick = () => toggleSettings();
 $('btn-settings-close').onclick = () => toggleSettings(false);
@@ -1849,6 +1936,7 @@ $('btn-float').onclick = () => {
   // Asked once, at the moment it matters, instead of a permanent warning
   // stripe that everyone learns to stop seeing.
   if (!db.preflightDone) {
+    pfOpener = document.activeElement;
     $('preflight').hidden = false;
     $('pf-go').focus();
     return;
@@ -1858,13 +1946,20 @@ $('btn-float').onclick = () => {
 $('pf-go').onclick = () => {
   db.preflightDone = true;
   save();
-  $('preflight').hidden = true;
+  closePreflight();
   openFloat();
 };
-$('pf-cancel').onclick = () => ($('preflight').hidden = true);
+$('pf-cancel').onclick = closePreflight;
 $('btn-unfloat').onclick = closeFloat;
 
 /* --- help --------------------------------------------------------------- */
+let pfOpener = null;
+function closePreflight() {
+  $('preflight').hidden = true;
+  if (pfOpener && pfOpener.focus) pfOpener.focus();
+  pfOpener = null;
+}
+
 let helpOpener = null;
 function openHelp() {
   helpOpener = document.activeElement;
@@ -1884,7 +1979,7 @@ $('help').addEventListener('click', (e) => {
   if (e.target === $('help')) closeHelp();
 });
 $('preflight').addEventListener('click', (e) => {
-  if (e.target === $('preflight')) $('preflight').hidden = true;
+  if (e.target === $('preflight')) closePreflight();
 });
 
 /* --- keyboard ----------------------------------------------------------- */
@@ -1892,7 +1987,7 @@ function onKey(e) {
   // Escape is handled before the typing guard: it must work from anywhere.
   if (e.key === 'Escape') {
     if (!$('preflight').hidden) {
-      $('preflight').hidden = true;
+      closePreflight();
       return;
     }
     if (!$('help').hidden) {
@@ -1911,6 +2006,9 @@ function onKey(e) {
   const typing =
     t && (t.tagName === 'TEXTAREA' || t.tagName === 'INPUT' || t.isContentEditable);
   if (typing) return;
+  // Space activates a button, the arrows move a select or a slider. Stealing
+  // them globally breaks keyboard operation of every control in the app.
+  if (t && t.closest && t.closest('button, select, summary, a[href], [role="slider"]')) return;
   if (e.metaKey || e.ctrlKey || e.altKey) return;
 
   switch (e.key) {
@@ -1970,7 +2068,7 @@ function onKey(e) {
 document.addEventListener('keydown', onKey);
 
 /* --- resize ------------------------------------------------------------- */
-const ro = new ResizeObserver(() => requestAnimationFrame(relayout));
+const ro = new ResizeObserver(() => hostRaf(relayout));
 ro.observe(pViewport);
 window.addEventListener('beforeunload', () => {
   clearTimeout(saveTimer);

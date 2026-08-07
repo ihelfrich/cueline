@@ -39,9 +39,9 @@
      bright laptop panel under room lights. */
   --ink-0: #efeeec;
   --ink-1: #d8d7d5;
-  --ink-2: #929290;
-  --ink-3: #656563;
-  --ink-4: #414140;
+  --ink-2: #a1a19f;
+  --ink-3: #8a8a88;
+  --ink-4: #6e6e6c;
 
   --live: #e9a33c;
   --live-ink: #171003;
@@ -407,7 +407,7 @@ code {
   box-shadow: inset 2px 0 0 var(--live);
 }
 .editor::placeholder {
-  color: var(--ink-4);
+  color: var(--ink-3);
 }
 
 .pane-foot {
@@ -745,21 +745,27 @@ body.pip-body .prompter {
   --lh: calc(1em * var(--line-height));
   --spent-a: 1;
   --ahead-floor: 1;
+  /* The last stop is pulled clear of the control bar. Without this, on a
+     short window the full-brightness plateau ran underneath the opaque bar
+     and a line of text was guillotined mid-glyph. */
+  --plateau: min(calc(var(--reading) + var(--lh) * 2.4), calc(100% - 84px));
   -webkit-mask-image: linear-gradient(
     to bottom,
     rgba(0, 0, 0, var(--spent-a)) 0,
     rgba(0, 0, 0, var(--spent-a)) calc(var(--reading) - var(--lh) * 0.25),
     rgba(0, 0, 0, 1) calc(var(--reading) + var(--lh) * 0.1),
-    rgba(0, 0, 0, 1) calc(var(--reading) + var(--lh) * 2.4),
-    rgba(0, 0, 0, var(--ahead-floor)) 100%
+    rgba(0, 0, 0, 1) var(--plateau),
+    rgba(0, 0, 0, var(--ahead-floor)) calc(100% - 42px),
+    rgba(0, 0, 0, 0) calc(100% - 6px)
   );
   mask-image: linear-gradient(
     to bottom,
     rgba(0, 0, 0, var(--spent-a)) 0,
     rgba(0, 0, 0, var(--spent-a)) calc(var(--reading) - var(--lh) * 0.25),
     rgba(0, 0, 0, 1) calc(var(--reading) + var(--lh) * 0.1),
-    rgba(0, 0, 0, 1) calc(var(--reading) + var(--lh) * 2.4),
-    rgba(0, 0, 0, var(--ahead-floor)) 100%
+    rgba(0, 0, 0, 1) var(--plateau),
+    rgba(0, 0, 0, var(--ahead-floor)) calc(100% - 42px),
+    rgba(0, 0, 0, 0) calc(100% - 6px)
   );
 }
 
@@ -1057,7 +1063,14 @@ body.pip-body .prompter {
 
 /* Tally lamp. Steady, never blinking: in a camera room a steady lamp means
    live and a blinking one means a fault. */
+/* Positioned on the viewport rather than inside the control bar: the bar
+   withdraws two seconds into a roll, which would have hidden the live-
+   microphone indicator at exactly the moment it is telling the truth. */
 .p-tally {
+  position: absolute;
+  top: var(--s-2);
+  right: var(--s-3);
+  z-index: 4;
   display: inline-flex;
   align-items: center;
   gap: var(--s-1);
@@ -1065,9 +1078,8 @@ body.pip-body .prompter {
   font-weight: 600;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--ink-3);
-  padding-right: var(--s-1);
-  flex: none;
+  color: var(--ink-2);
+  text-shadow: 0 1px 3px #000;
 }
 .p-tally[hidden] {
   display: none;
@@ -1586,6 +1598,11 @@ table.keys td:first-child {
   }
   .topbar-mid .btn-label {
     display: none;
+  }
+  .topbar-mid .btn {
+    width: 28px;
+    padding: 0;
+    justify-content: center;
   }
 }
 

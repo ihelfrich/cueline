@@ -8,7 +8,7 @@
       name="description"
       content="A teleprompter that floats above Zoom in an always-on-top window. Words-per-minute pacing, live drift against a target length, and voice following."
     />
-    <link rel="stylesheet" href="app.css?v=2" />
+    <link rel="stylesheet" href="app.css?v=3" />
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Crect x='6' y='10' width='20' height='2' fill='%23efeeec'/%3E%3Crect x='6' y='15' width='20' height='2' fill='%23e9a33c'/%3E%3Crect x='6' y='20' width='13' height='2' fill='%23656563'/%3E%3C/svg%3E"
@@ -22,14 +22,14 @@
 
         <div class="topbar-mid">
           <select id="script-picker" class="picker" aria-label="Script"></select>
-          <button class="btn quiet" id="btn-new">
+          <button class="btn quiet" id="btn-new" data-icon="new" title="New script" aria-label="New script">
             <span class="btn-label">New</span>
           </button>
-          <button class="btn quiet" id="btn-import">
+          <button class="btn quiet" id="btn-import" data-icon="open" title="Open a .txt or .md file" aria-label="Open a file">
             <span class="btn-label">Open</span>
           </button>
           <input type="file" id="file-input" accept=".txt,.md,.markdown,text/plain" hidden />
-          <button class="btn quiet" id="btn-delete">
+          <button class="btn quiet" id="btn-delete" data-icon="delete" title="Delete this script" aria-label="Delete this script">
             <span class="btn-label">Delete</span>
           </button>
         </div>
@@ -96,11 +96,13 @@
                       <circle class="p-count-track" cx="39" cy="39" r="36" />
                       <circle class="p-count-sweep" cx="39" cy="39" r="36" />
                     </svg>
-                    <span id="p-count-n" class="num">3</span>
+                    <span id="p-count-n" class="num" aria-live="assertive" aria-atomic="true">3</span>
                   </div>
                 </div>
 
                 <div class="p-empty" id="p-empty" hidden>No script loaded.</div>
+
+                <span class="p-tally" id="p-mic" role="status" aria-live="polite" hidden>Listening</span>
               </div>
 
               <div class="p-bar" id="p-bar">
@@ -116,8 +118,6 @@
                 </div>
 
                 <span class="p-flex"></span>
-
-                <span class="p-tally" id="p-mic" hidden>Listening</span>
 
                 <span class="p-sect">
                   <button class="p-btn" id="p-prev" data-icon="prev-section" aria-label="Previous section"></button>
@@ -135,7 +135,7 @@
             </div>
           </div>
 
-          <div id="notice" class="notice" hidden>
+          <div id="notice" class="notice" role="alert" hidden>
             <span id="notice-text"></span>
             <button id="notice-x" data-icon="close" aria-label="Dismiss"></button>
           </div>
@@ -187,7 +187,7 @@
             <p class="hint" id="size-hint" hidden></p>
             <div class="ctl">
               <span><span class="lbl">Typeface</span></span>
-              <div class="seg" id="s-fontFamily">
+              <div class="seg" id="s-fontFamily" role="radiogroup" aria-label="Typeface">
                 <button data-v="system">System</button>
                 <button data-v="humanist">Avenir</button>
                 <button data-v="serif">Serif</button>
@@ -215,7 +215,7 @@
                 </label>
                 <div class="ctl">
                   <span><span class="lbl">Alignment</span></span>
-                  <div class="seg" id="s-align">
+                  <div class="seg" id="s-align" role="radiogroup" aria-label="Alignment">
                     <button data-v="left">Left</button>
                     <button data-v="center">Centre</button>
                   </div>
@@ -228,7 +228,7 @@
             <span class="lbl">Reading surface</span>
             <div class="ctl">
               <span><span class="lbl">Backdrop</span></span>
-              <div class="seg" id="s-background">
+              <div class="seg" id="s-background" role="radiogroup" aria-label="Backdrop">
                 <button data-v="clear">Clear</button>
                 <button data-v="dim">Dim</button>
                 <button data-v="solid">Solid</button>
@@ -245,7 +245,7 @@
             </label>
             <div class="ctl">
               <span><span class="lbl">Stress</span></span>
-              <div class="seg" id="s-emphasis">
+              <div class="seg" id="s-emphasis" role="radiogroup" aria-label="Stress style">
                 <button data-v="underline">Underline</button>
                 <button data-v="block">Block</button>
                 <button data-v="amber">Amber</button>
@@ -283,7 +283,7 @@
           <div class="set-group">
             <span class="lbl">Voice follow</span>
             <div class="ctl">
-              <div class="seg" id="s-voiceMode">
+              <div class="seg" id="s-voiceMode" role="radiogroup" aria-label="Voice follow mode">
                 <button data-v="off">Off</button>
                 <button data-v="pace">Pace</button>
                 <button data-v="words">Words</button>
@@ -355,7 +355,7 @@
               </label>
             </div>
 
-            <p class="hint" id="voice-status"></p>
+            <p class="hint" id="voice-status" role="status" aria-live="polite"></p>
           </div>
 
           <div class="set-group">
@@ -502,8 +502,8 @@
       </div>
     </div>
 
-    <script src="script-parse.js?v=2"></script>
-    <script src="icons.js?v=2"></script>
-    <script src="app.js?v=2"></script>
+    <script src="script-parse.js?v=3"></script>
+    <script src="icons.js?v=3"></script>
+    <script src="app.js?v=3"></script>
   </body>
 </html>

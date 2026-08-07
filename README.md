@@ -151,9 +151,10 @@ Word mode is Chromium-only (Chrome, Edge, Arc, Brave). Pace mode works anywhere
 node test/engine.test.js
 ```
 
-The app is three browser files with no build step, so the tests lift the real
-function bodies out of `app.js` and exercise those rather than a re-implementation
-— if a function is renamed the extraction fails, which is itself useful. They
+The app is plain browser files with no build step, so the tests lift the real
+function bodies out of `app.js` and `script-parse.js` and exercise those rather
+than a re-implementation — if a function is renamed the extraction fails, which
+is itself useful. They
 cover the parser, the words-per-minute timing identity, and the voice tracker
 (including re-acquisition and the backward-jump guard).
 
@@ -173,7 +174,7 @@ it will not stay on top by itself.
 
 ## Running it yourself
 
-It is three static files with no build step and no dependencies.
+Five static files, no build step, no dependencies.
 
 ```bash
 git clone https://github.com/ihelfrich/cueline.git && cd cueline && python3 -m http.server 8777
@@ -206,8 +207,9 @@ large value. No card shadows, no gradients, no glass, no pills.
 
 On the reading surface itself: the measure is capped at 17em so a line is five
 or six words wide however large the window, because a long line forces the eye
-to sweep back and re-find its place. Type auto-fits the window height, holding
-roughly six visible lines from a 900px window down to 140px. Already-said text
+to sweep back and re-find its place. Type is capped at `7.4vh + 8px`, so a short floating window
+shrinks the text to keep several lines in view rather than showing you one and
+a half; above roughly 450px of height the Size setting governs. Already-said text
 is dimmed by a mask in viewport space, so the boundary falls exactly on the
 reading line — to the pixel, mid-word — and costs nothing per frame. The
 full-brightness band is a plateau more than two line-heights tall rather than a
