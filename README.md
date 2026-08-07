@@ -234,6 +234,13 @@ entire screen if you like, and your audience still will not see it.
 | `⌃⌥H` | hide / show |
 | `⌃⌥Q` | quit |
 
+If it is ever stuck, `pkill -f cueline/desktop` from any terminal, or Ctrl-C in
+the terminal you started it from.
+
+On launch it shows a card with the shortcuts, including how to quit, then takes
+it away — a transparent click-through window has no affordances of its own, so
+it has to say so.
+
 It has no Dock icon and never takes focus, so nothing you type ever goes to it
 by accident — which also means Command-Q has nothing to quit. It lives in the
 menu bar instead: every control is in that menu, including Quit, for when the

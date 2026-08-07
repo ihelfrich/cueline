@@ -2232,6 +2232,23 @@ function initShell() {
     if (fn) fn(msg.payload);
   });
 
+  /*
+   * A transparent, click-through, Dock-less window that never takes focus has
+   * no affordances at all: nothing to click, nothing in the switcher, no menu
+   * of its own. Without this card the only way to learn how to dismiss it is
+   * to already know. It shows once on launch and takes itself away.
+   */
+  notify(
+    '<b>Cueline is running.</b> ' +
+      '<kbd>⌃⌥Space</kbd> start · ' +
+      '<kbd>⌃⌥I</kbd> take the mouse · ' +
+      '<kbd>⌃⌥H</kbd> hide · ' +
+      '<kbd>⌃⌥Q</kbd> quit. ' +
+      'Everything is also in the menu-bar icon.',
+    'info',
+    12000
+  );
+
   SHELL.info().catch(() => null).then((info) => {
     if (info && info.failedHotkeys && info.failedHotkeys.length) {
       notify(
