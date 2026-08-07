@@ -37,6 +37,10 @@ them.
 > Lines beginning with a chevron are notes to yourself. They are dimmed, never
 > spoken, and never counted toward the timing.
 
+Wrap a phrase in double equals to mark it as a word to hit: this proposal is
+==not a request for more funding==. Stressed words are drawn so they carry in
+peripheral vision, and you can change how in Settings.
+
 Set a target length above the script and the pace field reports your drift
 against it as you speak. Speed is stated in words per minute, so the figure
 means something exact: seven hundred words at 140 wpm runs five minutes,
@@ -72,14 +76,17 @@ const DEFAULTS = {
   measureEm: 17,
   flip: false,
   background: 'dim',
+  emphasis: 'underline',
   readingLine: 0.38,
   focusBand: true,
   showMarks: true,
   dimSpent: true,
   mirror: false,
   countdown: 3,
-  voice: false,
+  voiceMode: 'off', // 'off' | 'pace' | 'words'
   voiceLang: '',
+  micDeviceId: '',
+  micSensitivity: 9,
   pipW: 720,
   pipH: 300,
   hideBar: false,
@@ -219,6 +226,7 @@ function buildWordList() {
   doc.blocks.forEach((b) => {
     if (!b.words) return;
     const toks = b.text
+      .replace(/==/g, '')
       .replace(/\*/g, '')
       .split(/\s+/)
       .filter((t) => /[\p{L}\p{N}]/u.test(t));
@@ -360,10 +368,13 @@ async function setPlaying(next) {
     runResumedAt = null;
   }
 
-  // In voice mode "go" means "listen", not "start the clock".
-  if (S.voice) {
+  // In a voice mode, "go" means "start listening", not "start the clock".
+  if (S.voiceMode === 'words') {
     if (playing) voiceStart();
     else voiceStop();
+  } else if (S.voiceMode === 'pace') {
+    if (playing) vadStart();
+    else vadStop();
   }
 
   wakeBar();
@@ -518,6 +529,8 @@ function frame(ts) {
   const dt = lastFrame ? clamp((ts - lastFrame) / 1000, 0, 0.25) : 0;
   lastFrame = ts;
 
+  if (VAD.stream) vadSample(dt);
+
   if (layout.maxY > 0 && !countingDown) {
     // Ease the real speed toward the requested speed. Nudging the pace mid
     // sentence should feel like leaning on the accelerator, not a gear change.
@@ -539,7 +552,10 @@ function frame(ts) {
       // cannot fight each other for the same pixels.
       paint();
     } else if (playing) {
-      const v = velocity();
+      // In pace mode the clock only runs while you are actually talking.
+      const gated = S.voiceMode === 'pace' && (VAD.stream || VAD.wantOn);
+      const speaking = !!VAD.stream && VAD.speaking;
+      const v = gated && !speaking ? 0 : velocity();
       if (v > 0) {
         y = Math.min(layout.maxY, y + v * dt);
         paint();
@@ -560,6 +576,15 @@ function tickUI(force) {
   const now = performance.now();
   if (!force && now - uiLast < 100) return;
   uiLast = now;
+
+  updateTally();
+  if (VAD.stream && !$('settings').hidden && !$('voice-mic-row').hidden) {
+    // Map roughly -70..-15 dBFS onto the bar.
+    const pct = (db) => clamp(((db + 70) / 55) * 100, 0, 100);
+    $('meter-fill').style.width = pct(VAD.level) + '%';
+    $('meter-gate').style.left = pct(VAD.floor + (S.micSensitivity || 9)) + '%';
+    $('meter-fill').classList.toggle('hot', VAD.speaking);
+  }
 
   const v = settledVelocity();
   const remaining = v > 0 ? (layout.maxY - y) / v : NaN;
@@ -599,6 +624,28 @@ function tickUI(force) {
   }
 }
 
+/**
+ * The tally lamp. Pace mode reports whether it can hear you; word mode
+ * reports whether it can still place you in the script.
+ */
+function updateTally() {
+  if (!P.mic) return;
+  if (S.voiceMode === 'pace' && VAD.stream) {
+    P.mic.hidden = false;
+    P.mic.dataset.state = VAD.speaking ? 'locked' : 'searching';
+    P.mic.textContent = VAD.speaking ? 'Speaking' : 'Waiting';
+    return;
+  }
+  if (S.voiceMode === 'words') {
+    const st = VOICE.status;
+    P.mic.hidden = !(st === 'listening' || st === 'locked' || st === 'searching');
+    P.mic.dataset.state = st;
+    P.mic.textContent = st === 'locked' ? 'Following' : st === 'searching' ? 'Searching' : 'Listening';
+    return;
+  }
+  P.mic.hidden = true;
+}
+
 function syncPlayButtons() {
   // `hidden` is an HTMLElement property, so setting it on an <svg> does
   // nothing. Toggle a class instead. Nodes are held by reference because the
@@ -615,7 +662,7 @@ function syncPlayButtons() {
   $('t-play').classList.toggle('on', playing);
   prompter.classList.toggle('rolling', playing);
   $('app').classList.toggle('rolling', playing);
-  const voiceMode = S.voice && !!SpeechRec;
+  const voiceMode = S.voiceMode !== 'off';
   $('t-play-label').textContent = playing ? 'Stop' : voiceMode ? 'Listen' : 'Start';
 }
 
@@ -689,6 +736,8 @@ function applySettings() {
     S.background +
     ' font-' +
     S.fontFamily +
+    ' emph-' +
+    S.emphasis +
     (S.focusBand ? ' focus-band' : '') +
     (S.showMarks ? ' show-marks' : '') +
     (S.dimSpent ? ' dim-spent' : '') +
@@ -723,6 +772,8 @@ function applySettings() {
   segSync('s-fontFamily', S.fontFamily);
   segSync('s-align', S.align);
   segSync('s-background', S.background);
+  segSync('s-emphasis', S.emphasis);
+  $('clear-hint').hidden = S.background !== 'clear';
 
   $('s-focusBand').checked = S.focusBand;
   $('s-showMarks').checked = S.showMarks;
@@ -730,8 +781,13 @@ function applySettings() {
   $('s-mirror').checked = S.mirror;
   $('s-flip').checked = S.flip;
   $('s-hideBar').checked = S.hideBar;
-  $('s-voice').checked = S.voice;
+  segSync('s-voiceMode', S.voiceMode);
   $('s-voiceLang').value = S.voiceLang || '';
+  $('voice-words-note').hidden = S.voiceMode !== 'words';
+  $('voice-pace-note').hidden = S.voiceMode !== 'pace';
+  $('voice-lang-row').hidden = S.voiceMode !== 'words';
+  $('voice-mic-row').hidden = S.voiceMode !== 'pace';
+  $('s-micSensitivity').value = S.micSensitivity;
 
   renderStats();
   save();
@@ -951,6 +1007,181 @@ function closeFloat() {
 }
 
 /* ==========================================================================
+   Pace follow — speech-gated scrolling
+   --------------------------------------------------------------------------
+   Why this exists, and why it is the default.
+
+   The Web Speech API is the only way a browser will transcribe you, and it
+   comes with two costs that matter enormously here. It gives no control over
+   which microphone it opens — always the default device, with no deviceId
+   constraint and no way to hand it an existing stream — and starting it can
+   take the microphone away from whatever else is using it. In practice that
+   means turning on word-level tracking during a Google Meet or Zoom call can
+   mute you on the call. For a teleprompter that is a catastrophic failure: it
+   breaks the exact situation the product exists for.
+
+   getUserMedia has neither problem. It accepts a deviceId, so you can point
+   the prompter at a different microphone from the one carrying the call, and
+   it is designed for concurrent consumers.
+
+   So this mode does not transcribe at all. It asks one question sixty times a
+   second — are you speaking right now? — and advances the script at your set
+   rate only while the answer is yes. Stop talking and it stops. Take a
+   question and it waits. It cannot know WHICH word you are on, so it will not
+   correct drift the way word tracking does, but it never lies about it, it
+   never leaves the machine, and it never touches your call audio.
+   ========================================================================== */
+
+const VAD = {
+  stream: null,
+  ctx: null,
+  analyser: null,
+  buf: null,
+  /** Slowly-tracked noise floor in dBFS. */
+  floor: -70,
+  /** True while we believe speech is present, including the hangover. */
+  speaking: false,
+  lastVoicedAt: 0,
+  /** Smoothed level, for the meter. */
+  level: -100,
+  status: 'off',
+  deviceId: '',
+  error: '',
+  /** True from the moment we ask for the microphone until we stop or fail. */
+  wantOn: false,
+};
+
+/** Speech continues through the gaps between words; this bridges them. */
+const VAD_HANGOVER_MS = 320;
+
+function vadSupported() {
+  return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.AudioContext);
+}
+
+async function vadStart() {
+  if (VAD.stream) return true;
+  VAD.wantOn = true;
+  if (!vadSupported()) {
+    VAD.wantOn = false;
+    VAD.status = 'unsupported';
+    setVoiceStatus('unsupported', 'This browser cannot open a microphone.');
+    return false;
+  }
+
+  try {
+    const audio = {
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+    };
+    // A specific device is what lets the call keep the one it is already on.
+    if (S.micDeviceId) audio.deviceId = { ideal: S.micDeviceId };
+
+    VAD.stream = await navigator.mediaDevices.getUserMedia({ audio });
+    VAD.ctx = new (window.AudioContext || window.webkitAudioContext)();
+    if (VAD.ctx.state === 'suspended') await VAD.ctx.resume();
+
+    const src = VAD.ctx.createMediaStreamSource(VAD.stream);
+    VAD.analyser = VAD.ctx.createAnalyser();
+    VAD.analyser.fftSize = 1024;
+    VAD.analyser.smoothingTimeConstant = 0.3;
+    src.connect(VAD.analyser);
+    VAD.buf = new Float32Array(VAD.analyser.fftSize);
+
+    VAD.floor = -70;
+    VAD.level = -100;
+    VAD.speaking = false;
+    VAD.lastVoicedAt = 0;
+    VAD.status = 'listening';
+    VAD.error = '';
+
+    // Device labels are only populated once permission has been granted.
+    listMicrophones();
+    setVoiceStatus('listening', 'Listening for your voice. The script moves only while you speak.');
+    return true;
+  } catch (err) {
+    VAD.stream = null;
+    VAD.wantOn = false;
+    VAD.status = 'denied';
+    VAD.error = err && err.name ? err.name : String(err);
+    setVoiceStatus(
+      'denied',
+      VAD.error === 'NotAllowedError'
+        ? 'Microphone access was refused, so pace follow is off.'
+        : 'Could not open the microphone: ' + VAD.error
+    );
+    return false;
+  }
+}
+
+function vadStop() {
+  VAD.wantOn = false;
+  if (VAD.stream) {
+    VAD.stream.getTracks().forEach((t) => t.stop());
+    VAD.stream = null;
+  }
+  if (VAD.ctx) {
+    VAD.ctx.close().catch(() => {});
+    VAD.ctx = null;
+  }
+  VAD.analyser = null;
+  VAD.buf = null;
+  VAD.speaking = false;
+  VAD.status = 'off';
+}
+
+/**
+ * One reading of the input, in dBFS, with an adaptive noise floor.
+ *
+ * The floor tracks downward quickly and upward very slowly, so a quiet room
+ * calibrates in about a second and a passing air-conditioner does not
+ * permanently raise the gate.
+ */
+function vadSample(dt) {
+  if (!VAD.analyser) return;
+  VAD.analyser.getFloatTimeDomainData(VAD.buf);
+
+  let sum = 0;
+  for (let i = 0; i < VAD.buf.length; i++) sum += VAD.buf[i] * VAD.buf[i];
+  const rms = Math.sqrt(sum / VAD.buf.length);
+  const db = 20 * Math.log10(Math.max(rms, 1e-8));
+
+  VAD.level = VAD.level === -100 ? db : approach(VAD.level, db, 0.05, dt);
+
+  if (db < VAD.floor) {
+    VAD.floor = approach(VAD.floor, db, 0.25, dt);
+  } else {
+    VAD.floor = approach(VAD.floor, Math.min(db, VAD.floor + 12), 6, dt);
+  }
+
+  const gate = VAD.floor + (S.micSensitivity || 9);
+  const now = performance.now();
+  if (VAD.level > gate) VAD.lastVoicedAt = now;
+  VAD.speaking = now - VAD.lastVoicedAt < VAD_HANGOVER_MS;
+}
+
+/** Enumerate inputs so the prompter can be pointed at a different mic. */
+async function listMicrophones() {
+  const sel = $('s-micDevice');
+  if (!sel || !navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) return;
+  try {
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const mics = devices.filter((d) => d.kind === 'audioinput');
+    sel.innerHTML =
+      '<option value="">Default input</option>' +
+      mics
+        .map(
+          (d, i) =>
+            `<option value="${escapeText(d.deviceId)}">${escapeText(d.label || 'Microphone ' + (i + 1))}</option>`
+        )
+        .join('');
+    sel.value = S.micDeviceId || '';
+  } catch {
+    /* enumeration is a nicety; the default device still works */
+  }
+}
+
+/* ==========================================================================
    Voice follow
    --------------------------------------------------------------------------
    The reader — not a clock — drives the script.
@@ -1114,17 +1345,13 @@ function setVoiceStatus(status, message) {
       (status === 'locked' || status === 'listening' ? ' ok' : '') +
       (status === 'denied' || status === 'error' || status === 'unsupported' ? ' bad' : '');
   }
-  if (P.mic) {
-    P.mic.hidden = !(status === 'listening' || status === 'locked' || status === 'searching');
-    P.mic.dataset.state = status;
-    P.mic.textContent = status === 'locked' ? 'following' : status === 'searching' ? 'searching' : 'listening';
-  }
+  updateTally();
   syncPlayButtons();
 }
 
 /** Voice owns the scroll whenever it is actually running. */
 function voiceDriving() {
-  return S.voice && VOICE.wantOn;
+  return S.voiceMode === 'words' && VOICE.wantOn;
 }
 
 /* -------------------------------------------------------------- lifecycle */
@@ -1132,9 +1359,8 @@ function voiceDriving() {
 function voiceStart() {
   if (!SpeechRec) {
     setVoiceStatus('unsupported');
-    S.voice = false;
-    const cb = $('s-voice');
-    if (cb) cb.checked = false;
+    S.voiceMode = 'off';
+    applySettings();
     return;
   }
   if (VOICE.rec) return;
@@ -1217,9 +1443,7 @@ function voiceStart() {
   rec.onerror = (e) => {
     if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
       setVoiceStatus('denied');
-      S.voice = false;
-      const cb = $('s-voice');
-      if (cb) cb.checked = false;
+      S.voiceMode = 'off';
       voiceStop();
       save();
     } else if (e.error === 'no-speech' || e.error === 'aborted') {
@@ -1275,7 +1499,8 @@ function voiceStop() {
       /* ignore */
     }
   }
-  setVoiceStatus(SpeechRec ? 'off' : 'unsupported');
+  setVoiceStatus(SpeechRec || vadSupported() ? 'off' : 'unsupported');
+  if (S.voiceMode === 'pace') listMicrophones();
 }
 
 /** Called when the script or position changes underneath the tracker. */
@@ -1547,19 +1772,44 @@ $('s-voiceLang').addEventListener('change', (e) => {
   }
 });
 
-$('s-voice').addEventListener('change', (e) => {
-  S.voice = e.target.checked;
+function setVoiceMode(mode) {
+  S.voiceMode = mode;
   save();
-  if (S.voice && playing) voiceStart();
-  else if (!S.voice) voiceStop();
-  else setVoiceStatus('off', 'Ready — press Start and it will listen.');
+  // Never leave two capture paths open at once.
+  voiceStop();
+  vadStop();
+  if (mode === 'words' && playing) voiceStart();
+  else if (mode === 'pace' && playing) vadStart();
+  else if (mode === 'off') setVoiceStatus('off');
+  else setVoiceStatus('off', 'Ready. Press Listen and it will follow you.');
+  if (mode === 'pace') listMicrophones();
   applySettings();
+}
+
+$('s-voiceMode').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-v]');
+  if (b) setVoiceMode(b.dataset.v);
+});
+
+$('s-micDevice').addEventListener('change', async (e) => {
+  S.micDeviceId = e.target.value;
+  save();
+  if (VAD.stream) {
+    vadStop();
+    await vadStart();
+  }
+});
+
+$('s-micSensitivity').addEventListener('input', (e) => {
+  S.micSensitivity = Number(e.target.value);
+  save();
 });
 
 for (const [id, key] of [
   ['s-fontFamily', 'fontFamily'],
   ['s-align', 'align'],
   ['s-background', 'background'],
+  ['s-emphasis', 'emphasis'],
 ]) {
   $(id).addEventListener('click', (e) => {
     const b = e.target.closest('button[data-v]');
@@ -1743,7 +1993,8 @@ window.addEventListener('beforeunload', () => {
   applySettings();
   renderScript();
   syncPlayButtons();
-  setVoiceStatus(SpeechRec ? 'off' : 'unsupported');
+  setVoiceStatus(SpeechRec || vadSupported() ? 'off' : 'unsupported');
+  if (S.voiceMode === 'pace') listMicrophones();
 
   // One onboarding surface. The demo script in the prompter already explains
   // the product; opening a modal wall on top of it said everything twice.

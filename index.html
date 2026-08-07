@@ -65,7 +65,7 @@
 # A heading becomes a section you can jump to
 > A line beginning with > is a note to yourself. Dimmed, never spoken, never counted.
 --- draws a rule, for a slide change
-**bold** for words you must not fumble, *italic* for stress"
+**bold** for words you must not fumble, ==stress== for words to hit"
           ></textarea>
 
           <div class="pane-foot">
@@ -234,10 +234,26 @@
                 <button data-v="solid">Solid</button>
               </div>
             </div>
+            <p class="hint" id="clear-hint" hidden>
+              Clear puts the text on the screen with no panel behind it, outlined so it stays
+              legible over anything. A floating window is painted by the operating system and is
+              always opaque, so Clear only takes effect on this page and in full screen.
+            </p>
             <label class="ctl">
               <span><span class="lbl">Reading line</span><b id="v-readingLine"></b></span>
               <input type="range" id="s-readingLine" min="0.15" max="0.7" step="0.01" />
             </label>
+            <div class="ctl">
+              <span><span class="lbl">Stress</span></span>
+              <div class="seg" id="s-emphasis">
+                <button data-v="underline">Underline</button>
+                <button data-v="block">Block</button>
+                <button data-v="amber">Amber</button>
+              </div>
+            </div>
+            <p class="hint">
+              How <code>==stressed==</code> words are drawn.
+            </p>
             <details class="set-more">
               <summary><span data-icon="chevron-down"></span>Optics and prompter glass</summary>
               <div>
@@ -266,39 +282,80 @@
 
           <div class="set-group">
             <span class="lbl">Voice follow</span>
-            <label class="check"
-              ><input type="checkbox" id="s-voice" /><span
-                >Follow my voice — <b>Start</b> then becomes <b>Listen</b></span
-              ></label
-            >
-            <label class="ctl">
-              <span><span class="lbl">Spoken language</span></span>
-              <select id="s-voiceLang" class="picker wide">
-                <option value="">Match my browser</option>
-                <option value="en-US">English (United States)</option>
-                <option value="en-GB">English (United Kingdom)</option>
-                <option value="en-AU">English (Australia)</option>
-                <option value="en-IN">English (India)</option>
-                <option value="es-ES">Spanish (Spain)</option>
-                <option value="es-MX">Spanish (Mexico)</option>
-                <option value="fr-FR">French</option>
-                <option value="de-DE">German</option>
-                <option value="it-IT">Italian</option>
-                <option value="pt-BR">Portuguese (Brazil)</option>
-                <option value="nl-NL">Dutch</option>
-                <option value="sv-SE">Swedish</option>
-                <option value="pl-PL">Polish</option>
-                <option value="ja-JP">Japanese</option>
-                <option value="ko-KR">Korean</option>
-                <option value="cmn-Hans-CN">Chinese (Mandarin, simplified)</option>
-                <option value="hi-IN">Hindi</option>
-              </select>
-            </label>
-            <p class="hint" id="voice-status"></p>
-            <p class="hint">
-              Speech is transcribed by your browser's recognition service, which means it leaves
-              this machine. Leave this off for material that must not.
+            <div class="ctl">
+              <div class="seg" id="s-voiceMode">
+                <button data-v="off">Off</button>
+                <button data-v="pace">Pace</button>
+                <button data-v="words">Words</button>
+              </div>
+            </div>
+
+            <p class="hint" id="voice-pace-note" hidden>
+              The script advances only while you are actually speaking, at the rate you set, and
+              holds the moment you stop. Nothing is transcribed and nothing leaves this machine.
+              This mode shares the microphone properly, so it will not interrupt a call.
             </p>
+
+            <p class="warn" id="voice-words-note" hidden>
+              <b>Words tracks you exactly — and it will take the microphone.</b> Browser speech
+              recognition always opens the default input and cannot share it, so switching this on
+              during a Zoom or Meet call can mute you on that call. Use it to rehearse, or only
+              when the call is running on a different device. Speech is also transcribed by your
+              browser's recognition service, so it leaves this machine.
+            </p>
+
+            <div id="voice-mic-row" hidden>
+              <label class="ctl">
+                <span><span class="lbl">Microphone</span></span>
+                <select id="s-micDevice" class="picker wide">
+                  <option value="">Default input</option>
+                </select>
+              </label>
+              <p class="hint">
+                Point this at a different microphone from the one carrying your call and the two
+                cannot interfere at all.
+              </p>
+              <label class="ctl">
+                <span><span class="lbl">Sensitivity</span></span>
+                <input type="range" id="s-micSensitivity" min="3" max="20" step="1" />
+              </label>
+              <div class="meter" aria-hidden="true">
+                <i id="meter-fill"></i>
+                <i id="meter-gate"></i>
+              </div>
+              <p class="hint">
+                The bar shows your input; the tick is the threshold. Speak normally — the bar
+                should cross it comfortably, and sit below it when you are quiet.
+              </p>
+            </div>
+
+            <div id="voice-lang-row" hidden>
+              <label class="ctl">
+                <span><span class="lbl">Spoken language</span></span>
+                <select id="s-voiceLang" class="picker wide">
+                  <option value="">Match my browser</option>
+                  <option value="en-US">English (United States)</option>
+                  <option value="en-GB">English (United Kingdom)</option>
+                  <option value="en-AU">English (Australia)</option>
+                  <option value="en-IN">English (India)</option>
+                  <option value="es-ES">Spanish (Spain)</option>
+                  <option value="es-MX">Spanish (Mexico)</option>
+                  <option value="fr-FR">French</option>
+                  <option value="de-DE">German</option>
+                  <option value="it-IT">Italian</option>
+                  <option value="pt-BR">Portuguese (Brazil)</option>
+                  <option value="nl-NL">Dutch</option>
+                  <option value="sv-SE">Swedish</option>
+                  <option value="pl-PL">Polish</option>
+                  <option value="ja-JP">Japanese</option>
+                  <option value="ko-KR">Korean</option>
+                  <option value="cmn-Hans-CN">Chinese (Mandarin, simplified)</option>
+                  <option value="hi-IN">Hindi</option>
+                </select>
+              </label>
+            </div>
+
+            <p class="hint" id="voice-status"></p>
           </div>
 
           <div class="set-group">
@@ -415,7 +472,8 @@
           <tr><td><code># Heading</code></td><td>a section you can jump between</td></tr>
           <tr><td><code>&gt; Note</code></td><td>a cue to yourself — dimmed, never counted</td></tr>
           <tr><td><code>---</code></td><td>a rule, for a slide change</td></tr>
-          <tr><td><code>**bold**</code> <code>*italic*</code></td><td>stress</td></tr>
+          <tr><td><code>==stress==</code></td><td>a word to hit — drawn per the Stress setting</td></tr>
+          <tr><td><code>**bold**</code> <code>*italic*</code></td><td>emphasis</td></tr>
           <tr><td><code>- item</code></td><td>a list item</td></tr>
         </table>
         <p class="hint">

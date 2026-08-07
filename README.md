@@ -68,6 +68,7 @@ Plain text, close enough to Markdown that your script stays readable anywhere.
 | `# Heading` | a section you can jump between |
 | `> Cue` | a note to yourself — dimmed, never counted in the timing |
 | `---` | a divider, e.g. "advance the slide" |
+| `==stress==` | a word to hit — underlined, blocked or amber, your choice |
 | `**bold**` `*italic*` | emphasis |
 | `- item` | a bullet |
 
@@ -93,35 +94,56 @@ focus, use the buttons on the floating window, or let voice follow drive it.
 
 ## Voice follow
 
-Turn it on in Settings and **Start** becomes **Listen**. The reader drives the
-script instead of a clock: speak, and the line you are saying stays on the
-reading line. Pause and it waits. Take a question and it waits. Come back to the
-script and it picks you up again.
+Two modes, because they make opposite trade-offs.
 
-Speech recognition gives a noisy, laggy, partly-wrong stream of words, so three
-things sit between it and the scroll:
+### Pace — the default
+
+The script advances only while you are actually speaking, at the rate you set,
+and holds the instant you stop. Pause, take a question, go off on a tangent —
+it waits. It cannot know *which* word you are on, so it will not correct drift,
+but it never guesses either.
+
+It works by opening the microphone with `getUserMedia` and measuring input
+level against an adaptive noise floor. Nothing is transcribed and nothing
+leaves your machine. Crucially, `getUserMedia` is designed for concurrent use
+and accepts a specific device, so **pace follow will not interrupt your call** —
+and you can point it at a different microphone from the one carrying the call
+if you want them fully isolated.
+
+### Words — exact tracking, with a real cost
+
+Word-level tracking keeps the line you are actually saying on the reading line.
+Speak, and it follows; leave the script, and it stops and waits rather than
+guessing; return, and it finds you again.
+
+**It will take the microphone.** Browser speech recognition always opens the
+default input, gives no way to choose a device or hand it an existing stream,
+and starting it can pull the microphone away from whatever else is using it —
+so switching it on mid-call can mute you in Zoom or Meet. Use it to rehearse,
+or only when the call audio is on a different device. Speech is also
+transcribed by your browser's recognition service, so it leaves your machine.
+Cueline says all of this in the settings panel, next to the switch.
+
+Under the noise, three things make word tracking feel calm rather than twitchy:
 
 **Predict and correct.** Confirmations arrive in bursts a second or two apart.
 Moving only on confirmation gives a stop-start crawl that is horrible to read
 against, so between confirmations Cueline keeps gliding at the pace it measured
 from your last few, and each new match is a small correction rather than a jump.
-Continuous motion, periodic accuracy.
 
-**Lock states and re-acquisition.** When it can no longer place what it is
-hearing it says so, stops moving rather than guessing, and widens its search —
-first a few sentences, then a few paragraphs, then the whole script. A tracker
-that only ever looks just ahead of itself strands you the moment you ad-lib.
+**Lock states and re-acquisition.** When it can no longer place what it hears it
+says so, stops moving, and widens its search — first a few sentences, then a few
+paragraphs, then the whole script. A tracker that only looks just ahead of
+itself strands you the moment you ad-lib.
 
 **Asymmetric trust.** Moving forward on a decent match is cheap to recover from.
 Moving backward is not — a repeated phrase throwing you into text you already
-read is the thing that makes people abandon voice prompters. Backward jumps
-therefore need a near-perfect match.
+read is what makes people abandon voice prompters. Backward jumps need a
+near-perfect match.
 
 Set your spoken language in Settings; accuracy falls off badly on the wrong one.
-
-- Chromium browsers only (Chrome, Edge, Arc, Brave).
-- Speech goes to your browser's recognition service, so **leave it off for
-  confidential material.** Everything else in Cueline is local.
+Word mode is Chromium-only (Chrome, Edge, Arc, Brave). Pace mode works anywhere
+`getUserMedia` does, including Safari and Firefox.
 
 ## Tests
 
@@ -137,11 +159,11 @@ cover the parser, the words-per-minute timing identity, and the voice tracker
 
 ## Browser support
 
-| | Floating always-on-top window | Voice follow |
-| --- | --- | --- |
-| Chrome, Edge, Arc, Brave | yes | yes |
-| Safari | no — opens a normal window | no |
-| Firefox | no — opens a normal window | no |
+| | Floating always-on-top window | Pace follow | Word follow |
+| --- | --- | --- | --- |
+| Chrome, Edge, Arc, Brave | yes | yes | yes |
+| Safari | no — opens a normal window | yes | no |
+| Firefox | no — opens a normal window | yes | no |
 
 The always-on-top window uses the [Document Picture-in-Picture API][dpip]. Where
 it is unavailable Cueline falls back to an ordinary pop-up window and tells you

@@ -8,6 +8,7 @@
  *   > Cue line       -> a direction to yourself (dimmed, not counted)
  *   ---              -> a divider, e.g. "advance the slide here"
  *   - item           -> a bullet
+ *   ==stress==      -> a word to hit; rendered per the emphasis setting
  *   **bold** *em*    -> emphasis
  *
  * Everything else is a spoken paragraph. Word counts drive both the scroll
@@ -22,6 +23,7 @@
 
   function countWords(text) {
     const cleaned = text
+      .replace(/==/g, '')
       .replace(/\*\*/g, '')
       .replace(/\*/g, '')
       .trim();
@@ -38,6 +40,7 @@
 
   function inline(text) {
     return escapeHtml(text)
+      .replace(/==([^=\n]+)==/g, '<mark>$1</mark>')
       .replace(/\*\*([^*]+)\*\*/g, '<b>$1</b>')
       .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<i>$2</i>')
       .replace(/\[([^\]\n]+)\]/g, '<span class="aside">[$1]</span>');

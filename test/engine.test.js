@@ -108,6 +108,18 @@ section('Parser — inline formatting and escaping');
 }
 
 {
+  const html = CuelineScript.parse('Hit ==this word== hard.').blocks[0].html;
+  assert('stress renders as a mark', html.includes('<mark>this word</mark>'), html);
+  check('stress markers do not inflate the word count', CuelineScript.parse('Hit ==this word== hard.').totalWords, 4);
+  const esc = CuelineScript.parse('==<img src=x onerror=alert(1)>==').blocks[0].html;
+  assert('stress content is still escaped', esc.includes('&lt;img') && !esc.includes('<img'), esc);
+  const un = CuelineScript.parse('a = b and c = d').blocks[0].html;
+  assert('a lone equals sign is not treated as a marker', !un.includes('<mark>'), un);
+  const multi = CuelineScript.parse('==one== plain ==two==').blocks[0].html;
+  assert('two stress runs on one line both render', (multi.match(/<mark>/g) || []).length === 2, multi);
+}
+
+{
   const d = CuelineScript.parse('1. first item\n2) second item');
   check('numbered lists parse as list items', d.blocks.map((b) => b.type), ['li', 'li']);
   check('numbered markers are kept', d.blocks.map((b) => b.marker), ['1.', '2.']);
