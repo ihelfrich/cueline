@@ -1,5 +1,7 @@
 # Cueline
 
+![Cueline](og.png)
+
 A teleprompter that floats above Zoom.
 
 **→ [Open Cueline](https://ihelfrich.github.io/cueline/)** — no install, no account, no upload.
@@ -11,41 +13,35 @@ instead of at the bottom of your screen.
 
 ---
 
-## Why this one
+## What it does differently
 
-Most browser teleprompters are a big scrolling `<div>` you have to keep in front
-of you by hand, with a speed slider whose units mean nothing. Cueline is built
-around the three things that actually go wrong when you present:
+Three things go wrong when you present from a script.
 
-**You lose your place.** The reading line is fixed and marked, text fades away
-from it, and lines you have already said are dimmed. Sections are jumpable with
-one key.
+You lose your place. Cueline fixes the reading line rather than the text: the
+line you are on stays put while the script moves past it, text you have already
+said is dimmed, and headings are jumpable with one key.
 
-**You run over time.** Speed is in **words per minute**, so the number means
-something real — 700 words at 140 wpm takes five minutes, whatever the font size
-or window width. Set a target length and Cueline tells you the wpm that lands it,
-then shows live whether you are running ahead or behind.
+You run over time. Speed is set in words per minute, so the number is exact. 700
+words at 140 wpm runs five minutes, whatever the type size or column width. Give
+it a target length and it reports the rate you need and your drift against it as
+you speak.
 
-**You can't reach the controls.** Zoom has focus, so nothing you press reaches
-the browser. Cueline answers this two ways: the floating window carries its own
-controls, and **voice follow** listens to you and keeps the line you are actually
-saying on the reading line — so you can ad-lib, pause, take a question, and it
-picks you back up when you return to the script.
+You cannot reach the controls, because Zoom has the keyboard. The floating window
+carries its own transport, and voice follow can drive the script for you.
 
-## The screen-share question, answered honestly
+## Screen sharing
 
-**A web page cannot hide itself from screen capture.** Only a native app can do
-that. So the rule is simple, and Cueline puts it in front of you once, at the
-moment it matters — the first time you float the prompter:
+A web page cannot exclude itself from screen capture. Only a native application
+can. So:
 
-> **In Zoom, share a _window_ or a _Chrome tab_ — not "Entire Screen".**
+> In Zoom, share a window or a single browser tab. Not the entire screen.
 
-A window share only ever contains the app you picked, so the floating prompter is
-never in it. That is also the sharper-looking choice for your audience. If you
-share the entire screen, everything on that screen goes out, prompter included.
+A window share carries only the window you nominate, so the floating prompter is
+not in it. An entire-screen share carries everything on the screen. Cueline puts
+this in front of you once, the first time you float the prompter.
 
-If you need a prompter that is invisible even during a full-screen share, that
-requires a native macOS app using `NSWindowSharingNone`, which is a different
+If you need a prompter that stays hidden even during a full-screen share, that
+requires a native macOS application using `NSWindowSharingNone`. Different
 project.
 
 ## Using it
