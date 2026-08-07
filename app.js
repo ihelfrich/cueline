@@ -2180,6 +2180,72 @@ window.addEventListener('beforeunload', () => {
 });
 
 /* ==========================================================================
+   Desktop shell
+   --------------------------------------------------------------------------
+   When the same files are loaded by the Electron shell rather than a browser,
+   the window itself IS the overlay: genuinely transparent, always on top,
+   click-through, and excluded from screen capture at the OS level. The page
+   drops the controls that no longer make sense and takes its transport from
+   global hotkeys, which reach it even while Zoom holds the keyboard.
+   ========================================================================== */
+
+const SHELL = window.cuelineShell && window.cuelineShell.isShell ? window.cuelineShell : null;
+
+function initShell() {
+  if (!SHELL) return;
+
+  document.body.classList.add('shell-body');
+  document.getElementById('app').classList.add('is-shell');
+
+  // The window is the float, so the button that creates one is meaningless.
+  $('btn-float').hidden = true;
+
+  // Over a live desktop rather than a page, no panel is the point.
+  if (S.background !== 'clear') setSetting('background', 'clear');
+
+  const ACTIONS = {
+    playPause: togglePlay,
+    faster: () => bumpWpm(5),
+    slower: () => bumpWpm(-5),
+    nextSection: () => jumpSection(1),
+    prevSection: () => jumpSection(-1),
+    nudgeBack: () => nudge(-1),
+    nudgeForward: () => nudge(1),
+    restart,
+    bigger: () => setSetting('fontSize', clamp(S.fontSize + 2, 20, 120)),
+    smaller: () => setSetting('fontSize', clamp(S.fontSize - 2, 20, 120)),
+    clickThrough: (p) => {
+      const on = !!(p && p.on);
+      prompter.classList.toggle('shell-interactive', !on);
+      notify(
+        on
+          ? 'Click-through <b>on</b> — clicks pass through to whatever is underneath.'
+          : 'Click-through <b>off</b> — the prompter takes the mouse. <b>⌃⌥I</b> to release it.',
+        'info',
+        4000
+      );
+    },
+  };
+
+  SHELL.on((msg) => {
+    const fn = msg && ACTIONS[msg.type];
+    if (fn) fn(msg.payload);
+  });
+
+  SHELL.info().catch(() => null).then((info) => {
+    if (info && info.failedHotkeys && info.failedHotkeys.length) {
+      notify(
+        '<b>Some shortcuts are already taken by another app:</b> ' +
+          escapeText(info.failedHotkeys.join(', ')) +
+          '. They will do nothing here until that app releases them.',
+        'warn',
+        0
+      );
+    }
+  });
+}
+
+/* ==========================================================================
    Boot
    ========================================================================== */
 
@@ -2204,6 +2270,7 @@ window.addEventListener('beforeunload', () => {
     save();
   }
 
+  initShell();
   tickUI(true);
   scheduleFrame();
 })();

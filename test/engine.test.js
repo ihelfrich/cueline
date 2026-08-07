@@ -493,6 +493,31 @@ section('Source integrity');
   check('the page loads nothing from a third party', external, []);
 }
 
+section('Desktop shell');
+
+{
+  const desktop = path.join(ROOT, 'desktop');
+  const main = fs.readFileSync(path.join(desktop, 'main.js'), 'utf8');
+
+  // The shell exists for exactly four powers a browser cannot grant. If any of
+  // these calls is lost, the shell silently becomes a worse browser.
+  const powers = [
+    ['transparent window', /transparent:\s*true/],
+    ['invisible to screen capture', /setContentProtection\(true\)/],
+    ['above full-screen Zoom', /'screen-saver'/],
+    ['click-through', /setIgnoreMouseEvents/],
+    ['global hotkeys', /globalShortcut\.register/],
+    ['never steals focus', /focusable:\s*false/],
+  ];
+  const missing = powers.filter(([, re]) => !re.test(main)).map(([name]) => name);
+  check('the shell keeps every power that justifies it', missing, []);
+
+  // It must load the same app, not a fork of it.
+  assert('the shell loads the web app itself', /loadFile\(path\.join\(ROOT, 'index\.html'\)/.test(main), 'shell should not carry its own copy of the prompter');
+  const files = ['main.js', 'preload.js', 'package.json'];
+  check('shell files present', files.filter((f) => !fs.existsSync(path.join(desktop, f))), []);
+}
+
 /* --------------------------------------------------------------- report */
 
 console.log(`\n${passed} passed, ${failed} failed\n`);

@@ -192,6 +192,47 @@ is itself useful. They
 cover the parser, the words-per-minute timing identity, and the voice tracker
 (including re-acquisition and the backward-jump guard).
 
+## The desktop shell — actual transparency
+
+Everything above runs in a browser. Four things do not, and cannot, however the
+page is written:
+
+- **A genuinely transparent window.** A browser's Picture-in-Picture window is a
+  real OS window with an opaque backing store. No CSS and no API can make it
+  see-through.
+- **Invisibility to screen capture**, including a full-screen share.
+- **Click-through**, so the overlay can never take a click meant for Zoom.
+- **Global hotkeys** that work while Zoom holds the keyboard.
+
+`desktop/` is a small Electron shell that loads the *same files* as the web app
+and adds exactly those four powers, and nothing else. The prompter, the timing
+model, sense lines, voice follow and the whole interface are identical.
+
+```bash
+cd desktop && npm install && npm start
+```
+
+The script floats over your desktop with nothing behind it — no panel, no
+window frame. It sits under your camera, stays above full-screen Zoom, passes
+clicks through to whatever is underneath, and is excluded from screen sharing
+and screen recording at the OS level via `NSWindowSharingNone`. Which means the
+"share a window, not the whole screen" rule does not apply to it: share the
+entire screen if you like, and your audience still will not see it.
+
+| Key | Does |
+| --- | --- |
+| `⌃⌥Space` | start / stop |
+| `⌃⌥↑` `⌃⌥↓` | faster / slower |
+| `⌃⌥←` `⌃⌥→` | previous / next section |
+| `⌃⌥[` `⌃⌥]` | back / forward one line |
+| `⌃⌥R` | back to the top |
+| `⌃⌥=` `⌃⌥−` | type size |
+| `⌃⌥I` | take the mouse, to move or resize it |
+| `⌃⌥H` | hide / show |
+
+It has no Dock icon and never takes focus, so nothing you type ever goes to it
+by accident. `npm run dist` builds a `.dmg`.
+
 ## Browser support
 
 | | Floating always-on-top window | Pace follow | Word follow |

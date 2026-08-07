@@ -538,6 +538,47 @@ code {
 }
 
 /*
+ * The desktop shell. Here the window really is transparent, so the page must
+ * be too — all the way down. Any opaque ancestor would defeat it.
+ */
+body.shell-body,
+body.shell-body .app,
+body.shell-body .stage,
+body.shell-body .prompter-host {
+  background: transparent;
+}
+body.shell-body {
+  overflow: hidden;
+}
+body.shell-body .app {
+  grid-template-rows: 1fr;
+}
+/* Nothing but the words. The transport lives on global hotkeys, which is the
+   entire reason for running the shell. */
+body.shell-body .topbar,
+body.shell-body .transport,
+body.shell-body .script-pane,
+body.shell-body .settings,
+body.shell-body .floating-note {
+  display: none;
+}
+body.shell-body .stage {
+  padding: 0;
+}
+body.shell-body .prompter {
+  border: none;
+  --panel: transparent;
+}
+/* The window is click-through by default, so the bar would be unreachable;
+   it appears only when the mouse has been handed back with ⌃⌥I. */
+body.shell-body .p-bar {
+  opacity: 0;
+}
+body.shell-body .prompter.shell-interactive .p-bar {
+  opacity: 1;
+}
+
+/*
  * A Picture-in-Picture window is a real operating-system window and is always
  * opaque. No web API — no CSS, no requestWindow option — can make the window
  * itself see-through, so `background: transparent` here would simply reveal
