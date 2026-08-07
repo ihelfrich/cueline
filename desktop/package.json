@@ -16,7 +16,7 @@
   "build": {
     "appId": "com.cueline.desktop",
     "productName": "Cueline",
-    "files": ["main.js", "preload.js", "../index.html", "../app.css", "../app.js", "../icons.js", "../script-parse.js"],
+    "files": ["main.js", "preload.js", "trayTemplate.png", "trayTemplate@2x.png", "../index.html", "../app.css", "../app.js", "../icons.js", "../script-parse.js"],
     "mac": { "category": "public.app-category.productivity", "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }] }
   }
 }

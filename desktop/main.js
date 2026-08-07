@@ -25,7 +25,7 @@
  * shell adds window powers and nothing else.
  */
 
-const { app, BrowserWindow, globalShortcut, ipcMain, screen, shell } = require('electron');
+const { app, BrowserWindow, Menu, Tray, globalShortcut, ipcMain, screen, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
 
@@ -33,6 +33,7 @@ const ROOT = path.join(__dirname, '..');
 const STATE_FILE = path.join(app.getPath('userData'), 'shell.json');
 
 let win = null;
+let tray = null;
 let clickThrough = true;
 let hidden = false;
 
@@ -155,6 +156,7 @@ const COMMANDS = {
   toggleClickThrough: () => {
     clickThrough = !clickThrough;
     applyFlags();
+    trayRebuild();
     send('clickThrough', { on: clickThrough });
   },
   toggleHidden: () => {
@@ -162,7 +164,9 @@ const COMMANDS = {
     hidden = !hidden;
     if (hidden) win.hide();
     else win.showInactive();
+    trayRebuild();
   },
+  quit: () => app.quit(),
   nudgeWindow: (dx, dy) => {
     if (!win) return;
     const b = win.getBounds();
@@ -185,6 +189,7 @@ const HOTKEYS = {
   'Control+Alt+-': COMMANDS.smaller,
   'Control+Alt+I': COMMANDS.toggleClickThrough,
   'Control+Alt+H': COMMANDS.toggleHidden,
+  'Control+Alt+Q': COMMANDS.quit,
 };
 
 function registerHotkeys() {
@@ -205,6 +210,53 @@ function registerHotkeys() {
   return failed;
 }
 
+/* -------------------------------------------------------------- menu bar */
+
+/*
+ * Without this the app is a trap. It hides its Dock icon so the overlay does
+ * not clutter the switcher, and the window is deliberately not focusable so it
+ * can never take a keystroke meant for Zoom — which together mean Command-Q
+ * has nothing to quit. A menu-bar item is the standard macOS answer for an
+ * agent app, and it is also where you go when you have forgotten the hotkeys.
+ */
+function createTray() {
+  const icon = path.join(__dirname, 'trayTemplate.png');
+  try {
+    tray = new Tray(icon);
+  } catch {
+    return; // an app that cannot draw a tray icon should still run
+  }
+  tray.setToolTip('Cueline');
+
+  const rebuild = () => {
+    tray.setContextMenu(
+      Menu.buildFromTemplate([
+        { label: hidden ? 'Show prompter' : 'Hide prompter', accelerator: 'Control+Alt+H', click: COMMANDS.toggleHidden },
+        {
+          label: clickThrough ? 'Take the mouse' : 'Let clicks pass through',
+          accelerator: 'Control+Alt+I',
+          click: COMMANDS.toggleClickThrough,
+        },
+        { type: 'separator' },
+        { label: 'Start / stop', accelerator: 'Control+Alt+Space', click: COMMANDS.playPause },
+        { label: 'Back to top', accelerator: 'Control+Alt+R', click: COMMANDS.restart },
+        { type: 'separator' },
+        { label: 'Edit the script in a browser', click: () => shell.openExternal('https://ihelfrich.github.io/cueline/') },
+        { label: 'Reset position', click: () => { if (win) win.setBounds(defaultBounds()); } },
+        { type: 'separator' },
+        { label: 'Hidden from screen sharing', enabled: false },
+        { type: 'separator' },
+        { label: 'Quit Cueline', accelerator: 'Control+Alt+Q', click: () => app.quit() },
+      ])
+    );
+  };
+
+  rebuild();
+  trayRebuild = rebuild;
+}
+
+let trayRebuild = () => {};
+
 /* ------------------------------------------------------------- lifecycle */
 
 if (!app.requestSingleInstanceLock()) {
@@ -215,6 +267,7 @@ if (!app.requestSingleInstanceLock()) {
   app.whenReady().then(() => {
     if (app.dock) app.dock.hide(); // an overlay has no business in the Dock
     createWindow();
+    createTray();
     const failed = registerHotkeys();
 
     ipcMain.handle('cueline:shellInfo', () => ({

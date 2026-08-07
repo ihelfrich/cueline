@@ -514,7 +514,13 @@ section('Desktop shell');
 
   // It must load the same app, not a fork of it.
   assert('the shell loads the web app itself', /loadFile\(path\.join\(ROOT, 'index\.html'\)/.test(main), 'shell should not carry its own copy of the prompter');
-  const files = ['main.js', 'preload.js', 'package.json'];
+  // An agent app with no Dock icon and an unfocusable window cannot be quit
+  // with Command-Q. If the menu bar item or the quit hotkey is ever removed,
+  // the app becomes unquittable without killing the process.
+  assert('there is a way to quit', /'Control\+Alt\+Q'/.test(main) && /new Tray\(/.test(main),
+    'a dockless, unfocusable app needs a tray item and a quit hotkey');
+
+  const files = ['main.js', 'preload.js', 'package.json', 'trayTemplate.png', 'trayTemplate@2x.png'];
   check('shell files present', files.filter((f) => !fs.existsSync(path.join(desktop, f))), []);
 }
 

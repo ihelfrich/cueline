@@ -209,8 +209,11 @@ and adds exactly those four powers, and nothing else. The prompter, the timing
 model, sense lines, voice follow and the whole interface are identical.
 
 ```bash
-cd desktop && npm install && npm start
+cd /Users/ian/Developer/cueline/desktop && npm install && npm start
 ```
+
+(Use the full path. On a case-insensitive macOS filesystem, `cd desktop` from
+your home directory lands you in `~/Desktop`.)
 
 The script floats over your desktop with nothing behind it — no panel, no
 window frame. It sits under your camera, stays above full-screen Zoom, passes
@@ -229,9 +232,15 @@ entire screen if you like, and your audience still will not see it.
 | `⌃⌥=` `⌃⌥−` | type size |
 | `⌃⌥I` | take the mouse, to move or resize it |
 | `⌃⌥H` | hide / show |
+| `⌃⌥Q` | quit |
 
 It has no Dock icon and never takes focus, so nothing you type ever goes to it
-by accident. `npm run dist` builds a `.dmg`.
+by accident — which also means Command-Q has nothing to quit. It lives in the
+menu bar instead: every control is in that menu, including Quit, for when the
+hotkeys have gone out of your head thirty seconds before you go live.
+
+`npm run dist` builds a `.dmg`. It will be unsigned, so the first launch needs
+right-click then Open; signing needs your own Apple Developer credentials.
 
 ## Browser support
 
