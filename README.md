@@ -35,7 +35,8 @@ picks you back up when you return to the script.
 ## The screen-share question, answered honestly
 
 **A web page cannot hide itself from screen capture.** Only a native app can do
-that. So the rule is simple, and Cueline keeps it on screen at all times:
+that. So the rule is simple, and Cueline puts it in front of you once, at the
+moment it matters — the first time you float the prompter:
 
 > **In Zoom, share a _window_ or a _Chrome tab_ — not "Entire Screen".**
 
