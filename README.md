@@ -182,6 +182,11 @@ git clone https://github.com/ihelfrich/cueline.git && cd cueline && python3 -m h
 Then open `http://localhost:8777`. Deploying it anywhere means copying the files
 onto any static host.
 
+Asset URLs carry a `?v=` query. **Bump it in `index.html` whenever you deploy a
+change**, or returning visitors can end up running a cached `app.js` against
+new markup — a state where the page loads without errors and silently does
+nothing when clicked.
+
 ## Design
 
 The reference is a broadcast prompter console rather than an application, and

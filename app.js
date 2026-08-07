@@ -892,7 +892,10 @@ function pipSupported() {
 function styleInto(win) {
   const link = win.document.createElement('link');
   link.rel = 'stylesheet';
-  link.href = new URL('app.css', location.href).href;
+  // Copy this page's own stylesheet URL, version query and all, so the
+  // floating window can never end up on a different build from the page.
+  const own = document.querySelector('link[rel=stylesheet]');
+  link.href = own ? own.href : new URL('app.css', location.href).href;
   win.document.head.appendChild(link);
   win.document.body.classList.add('pip-body');
   win.document.title = 'Cueline';
