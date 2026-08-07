@@ -362,8 +362,16 @@ section('Source integrity');
     !/\.app\s+\.prompter|#app\s+\.prompter|\.stage\s+\.p-/.test(css),
     'the prompter subtree is moved into a bare PiP document, so it cannot rely on page ancestors');
 
-  assert('no external resource references', !/https?:\/\/[^"')\s]+\.(css|js|woff2?|ttf|png|jpg|svg)/.test(css + html),
-    'everything must be self-contained for offline and CSP-safe use');
+  // The point of this check is that the page must LOAD nothing from a third
+  // party — no CDN script, no hosted webfont. Absolute URLs in Open Graph
+  // meta are required by that spec and are never fetched by the page, so they
+  // must not trip it. Check the attributes that actually cause a request.
+  const loaded = [
+    ...html.matchAll(/<(?:script|link|img|source|iframe)\b[^>]*?\b(?:src|href)="([^"]+)"/gi),
+  ].map((m) => m[1]);
+  const cssUrls = [...css.matchAll(/url\(\s*['"]?([^'")]+)/g)].map((m) => m[1]);
+  const external = [...loaded, ...cssUrls].filter((u) => /^(https?:)?\/\//i.test(u));
+  check('the page loads nothing from a third party', external, []);
 }
 
 /* --------------------------------------------------------------- report */
