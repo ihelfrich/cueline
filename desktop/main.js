@@ -22,7 +22,8 @@
  *
  * Everything else — the prompter, the timing model, voice follow, the whole
  * interface — is the identical web app loaded from the parent directory. This
- * shell adds window powers and nothing else.
+ * shell adds those window powers and the small arrangement surface required
+ * to control an otherwise invisible frameless window.
  */
 
 const { app, BrowserWindow, Menu, Tray, globalShortcut, ipcMain, screen, shell } = require('electron');
@@ -31,11 +32,23 @@ const fs = require('fs');
 
 const ROOT = path.join(__dirname, '..');
 const STATE_FILE = path.join(app.getPath('userData'), 'shell.json');
+const STATE_VERSION = 3;
+
+const PRESETS = Object.freeze({
+  compact: { width: 520, height: 210 },
+  standard: { width: 680, height: 260 },
+  wide: { width: 860, height: 300 },
+});
+const MIN_SIZE = Object.freeze({ width: 420, height: 180 });
+const MAX_SIZE = Object.freeze({ width: 1400, height: 640 });
 
 let win = null;
 let tray = null;
-let clickThrough = true;
 let hidden = false;
+let arranging = false;
+let backdropOpacity = 0.32;
+let setupComplete = false;
+let resizeGesture = null;
 
 /* ------------------------------------------------------------------ state */
 
@@ -57,15 +70,44 @@ function saveState(patch) {
   }
 }
 
+function clamp(value, lo, hi, fallback = lo) {
+  const n = Number(value);
+  return Math.max(lo, Math.min(hi, Number.isFinite(n) ? n : fallback));
+}
+
+/** Ignore geometry from older builds: it was saved while an invisible editor
+ *  column still consumed a third of the shell, so preserving it would preserve
+ *  the defect this state model replaces. */
+function restoreShellState() {
+  const saved = loadState();
+  if (saved.version !== STATE_VERSION) return {};
+  backdropOpacity = clamp(saved.backdropOpacity, 0, 1, 0.32);
+  setupComplete = !!saved.setupComplete;
+  return saved;
+}
+
 /** A strip under the built-in camera: the closer to the lens, the better the
  *  eye-line reads to the people watching. */
 function defaultBounds() {
   const d = screen.getPrimaryDisplay();
-  const width = Math.min(900, Math.round(d.bounds.width * 0.56));
-  const height = 320;
+  const { width, height } = PRESETS.standard;
   return {
-    x: Math.round(d.bounds.x + (d.bounds.width - width) / 2),
-    y: d.bounds.y,
+    x: Math.round(d.workArea.x + (d.workArea.width - width) / 2),
+    y: d.workArea.y + 8,
+    width,
+    height,
+  };
+}
+
+function normalizedBounds(bounds) {
+  if (!bounds) return null;
+  const display = screen.getDisplayMatching(bounds);
+  const area = display.workArea;
+  const width = clamp(bounds.width, MIN_SIZE.width, Math.min(MAX_SIZE.width, area.width), PRESETS.standard.width);
+  const height = clamp(bounds.height, MIN_SIZE.height, Math.min(MAX_SIZE.height, area.height), PRESETS.standard.height);
+  return {
+    x: clamp(bounds.x, area.x - width + 80, area.x + area.width - 80),
+    y: clamp(bounds.y, area.y, area.y + area.height - 80),
     width,
     height,
   };
@@ -83,15 +125,27 @@ function applyFlags() {
     skipTransformProcessType: true,
   });
   win.setContentProtection(true);
-  win.setIgnoreMouseEvents(clickThrough, { forward: true });
+  win.setFocusable(arranging);
+  win.setIgnoreMouseEvents(!arranging, { forward: true });
+
+  if (arranging) {
+    // Arrange is an explicit editing state. It takes focus and the mouse so
+    // the bounds are real, visible controls rather than an invisible hit box.
+    win.show();
+    win.focus();
+  }
 }
 
 function createWindow() {
-  const saved = loadState().bounds;
+  const saved = restoreShellState();
+  arranging = !setupComplete;
+  const bounds = normalizedBounds(saved.bounds) || defaultBounds();
   win = new BrowserWindow({
-    ...(saved || defaultBounds()),
-    minWidth: 320,
-    minHeight: 140,
+    ...bounds,
+    minWidth: MIN_SIZE.width,
+    minHeight: MIN_SIZE.height,
+    maxWidth: MAX_SIZE.width,
+    maxHeight: MAX_SIZE.height,
     frame: false,
     transparent: true,
     backgroundColor: '#00000000',
@@ -102,8 +156,9 @@ function createWindow() {
     maximizable: false,
     fullscreenable: false,
     skipTaskbar: true,
-    // Never take focus from Zoom. Every control has a global hotkey.
-    focusable: false,
+    // Present mode never takes focus from Zoom. Arrange mode changes this
+    // temporarily so its controls and native resize edges can work.
+    focusable: arranging,
     acceptFirstMouse: true,
     show: false,
     webPreferences: {
@@ -119,13 +174,23 @@ function createWindow() {
 
   win.once('ready-to-show', () => {
     applyFlags();
-    win.showInactive();
+    if (arranging) win.show();
+    else win.showInactive();
+    sendShellState();
   });
 
-  const remember = () => saveState({ bounds: win.getBounds() });
+  let rememberTimer = null;
+  const remember = () => {
+    // Dimensions should feel live in Arrange, but window drags can generate
+    // hundreds of events. Keep disk writes off that hot path.
+    sendShellState();
+    clearTimeout(rememberTimer);
+    rememberTimer = setTimeout(persistShellState, 140);
+  };
   win.on('moved', remember);
   win.on('resized', remember);
   win.on('closed', () => {
+    clearTimeout(rememberTimer);
     win = null;
   });
 
@@ -141,6 +206,131 @@ function send(type, payload) {
   if (win && !win.isDestroyed()) win.webContents.send('cueline:shell', { type, payload });
 }
 
+function shellState() {
+  return {
+    arranging,
+    backdropOpacity,
+    bounds: win && !win.isDestroyed() ? win.getBounds() : null,
+    setupComplete,
+    presets: PRESETS,
+  };
+}
+
+function sendShellState() {
+  send('shellState', shellState());
+}
+
+function persistShellState() {
+  saveState({
+    version: STATE_VERSION,
+    bounds: win && !win.isDestroyed() ? win.getBounds() : undefined,
+    backdropOpacity,
+    setupComplete,
+  });
+}
+
+function setArranging(on) {
+  arranging = !!on;
+  if (arranging) hidden = false;
+  if (!arranging) setupComplete = true;
+  applyFlags();
+  if (!arranging && win && !win.isDestroyed()) win.showInactive();
+  persistShellState();
+  trayRebuild();
+  sendShellState();
+}
+
+function setBackdropOpacity(value) {
+  backdropOpacity = clamp(value, 0, 1, backdropOpacity);
+  persistShellState();
+  trayRebuild();
+  sendShellState();
+}
+
+function placeUnderCamera() {
+  if (!win || win.isDestroyed()) return;
+  const display = screen.getDisplayMatching(win.getBounds());
+  const area = display.workArea;
+  const b = win.getBounds();
+  win.setBounds({
+    ...b,
+    x: Math.round(area.x + (area.width - b.width) / 2),
+    y: area.y + 8,
+  });
+}
+
+function applyPreset(name) {
+  if (!win || win.isDestroyed() || !PRESETS[name]) return;
+  const p = PRESETS[name];
+  const b = win.getBounds();
+  // Preserve the horizontal centre when changing size, then snap back beneath
+  // the camera. That is the only position that improves eye contact.
+  win.setBounds({
+    x: Math.round(b.x + (b.width - p.width) / 2),
+    y: b.y,
+    ...p,
+  });
+  placeUnderCamera();
+}
+
+function resetLayout() {
+  backdropOpacity = 0.32;
+  if (win && !win.isDestroyed()) win.setBounds(defaultBounds());
+  setArranging(true);
+}
+
+/** Frameless transparent windows have inconsistent native resize hit targets
+ *  across macOS/Electron releases. Arrange mode therefore owns an explicit
+ *  resize gesture. The renderer sends screen coordinates from one of eight
+ *  visible handles; the main process remains the only authority allowed to
+ *  move the native window. */
+function beginResize(edge, x, y) {
+  if (!arranging || !win || win.isDestroyed()) return;
+  if (!/^(?:n|e|s|w|ne|se|sw|nw)$/.test(edge)) return;
+  const startX = Number(x);
+  const startY = Number(y);
+  if (!Number.isFinite(startX) || !Number.isFinite(startY)) return;
+  resizeGesture = { edge, startX, startY, bounds: win.getBounds() };
+}
+
+function resizeTo(x, y) {
+  if (!resizeGesture || !win || win.isDestroyed()) return;
+  const pointerX = Number(x);
+  const pointerY = Number(y);
+  if (!Number.isFinite(pointerX) || !Number.isFinite(pointerY)) return;
+
+  const { edge, startX, startY, bounds: start } = resizeGesture;
+  const display = screen.getDisplayMatching(start);
+  const maxWidth = Math.min(MAX_SIZE.width, display.workArea.width);
+  const maxHeight = Math.min(MAX_SIZE.height, display.workArea.height);
+  const dx = pointerX - startX;
+  const dy = pointerY - startY;
+  let { x: nextX, y: nextY, width, height } = start;
+
+  if (edge.includes('e')) width = clamp(start.width + dx, MIN_SIZE.width, maxWidth, start.width);
+  if (edge.includes('s')) height = clamp(start.height + dy, MIN_SIZE.height, maxHeight, start.height);
+  if (edge.includes('w')) {
+    width = clamp(start.width - dx, MIN_SIZE.width, maxWidth, start.width);
+    nextX = start.x + start.width - width;
+  }
+  if (edge.includes('n')) {
+    height = clamp(start.height - dy, MIN_SIZE.height, maxHeight, start.height);
+    nextY = start.y + start.height - height;
+  }
+
+  win.setBounds({
+    x: Math.round(nextX),
+    y: Math.round(nextY),
+    width: Math.round(width),
+    height: Math.round(height),
+  });
+}
+
+function endResize() {
+  resizeGesture = null;
+  persistShellState();
+}
+
 const COMMANDS = {
   playPause: () => send('playPause'),
   faster: () => send('faster'),
@@ -153,20 +343,20 @@ const COMMANDS = {
   bigger: () => send('bigger'),
   smaller: () => send('smaller'),
 
-  toggleClickThrough: () => {
-    clickThrough = !clickThrough;
-    applyFlags();
-    trayRebuild();
-    send('clickThrough', { on: clickThrough });
-  },
+  toggleArrange: () => setArranging(!arranging),
   toggleHidden: () => {
     if (!win) return;
     hidden = !hidden;
     if (hidden) win.hide();
-    else win.showInactive();
+    else if (arranging) {
+      win.show();
+      win.focus();
+    } else win.showInactive();
     trayRebuild();
   },
   quit: () => app.quit(),
+  placeUnderCamera,
+  resetLayout,
   nudgeWindow: (dx, dy) => {
     if (!win) return;
     const b = win.getBounds();
@@ -187,7 +377,7 @@ const HOTKEYS = {
   'Control+Alt+R': COMMANDS.restart,
   'Control+Alt+=': COMMANDS.bigger,
   'Control+Alt+-': COMMANDS.smaller,
-  'Control+Alt+I': COMMANDS.toggleClickThrough,
+  'Control+Alt+I': COMMANDS.toggleArrange,
   'Control+Alt+H': COMMANDS.toggleHidden,
   'Control+Alt+Q': COMMANDS.quit,
 };
@@ -233,16 +423,41 @@ function createTray() {
       Menu.buildFromTemplate([
         { label: hidden ? 'Show prompter' : 'Hide prompter', accelerator: 'Control+Alt+H', click: COMMANDS.toggleHidden },
         {
-          label: clickThrough ? 'Take the mouse' : 'Let clicks pass through',
+          label: arranging ? 'Done arranging' : 'Arrange overlay…',
           accelerator: 'Control+Alt+I',
-          click: COMMANDS.toggleClickThrough,
+          click: COMMANDS.toggleArrange,
         },
+        {
+          label: 'Backdrop',
+          submenu: [
+            ['Clear', 0],
+            ['15%', 0.15],
+            ['30%', 0.3],
+            ['50%', 0.5],
+            ['70%', 0.7],
+            ['85%', 0.85],
+            ['Solid', 1],
+          ].map(([label, value]) => ({
+            label,
+            type: 'radio',
+            checked: Math.abs(backdropOpacity - value) < 0.035,
+            click: () => setBackdropOpacity(value),
+          })),
+        },
+        {
+          label: 'Size',
+          submenu: Object.entries(PRESETS).map(([name, bounds]) => ({
+            label: `${name[0].toUpperCase()}${name.slice(1)}  —  ${bounds.width} × ${bounds.height}`,
+            click: () => applyPreset(name),
+          })),
+        },
+        { label: 'Place under camera', click: COMMANDS.placeUnderCamera },
         { type: 'separator' },
         { label: 'Start / stop', accelerator: 'Control+Alt+Space', click: COMMANDS.playPause },
         { label: 'Back to top', accelerator: 'Control+Alt+R', click: COMMANDS.restart },
         { type: 'separator' },
         { label: 'Edit the script in a browser', click: () => shell.openExternal('https://ihelfrich.github.io/cueline/') },
-        { label: 'Reset position', click: () => { if (win) win.setBounds(defaultBounds()); } },
+        { label: 'Reset layout…', click: COMMANDS.resetLayout },
         { type: 'separator' },
         { label: 'Hidden from screen sharing', enabled: false },
         { type: 'separator' },
@@ -262,7 +477,15 @@ let trayRebuild = () => {};
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
-  app.on('second-instance', () => win && win.showInactive());
+  app.on('second-instance', () => {
+    if (!win) return;
+    hidden = false;
+    if (arranging) {
+      win.show();
+      win.focus();
+    } else win.showInactive();
+    trayRebuild();
+  });
 
   app.whenReady().then(() => {
     if (app.dock) app.dock.hide(); // an overlay has no business in the Dock
@@ -272,7 +495,7 @@ if (!app.requestSingleInstanceLock()) {
 
     ipcMain.handle('cueline:shellInfo', () => ({
       isShell: true,
-      clickThrough,
+      ...shellState(),
       hotkeys: HOTKEYS ? Object.keys(HOTKEYS) : [],
       failedHotkeys: failed,
       contentProtection: true,
@@ -281,10 +504,15 @@ if (!app.requestSingleInstanceLock()) {
     ipcMain.on('cueline:shellAction', (_e, msg) => {
       if (!msg) return;
       if (msg.type === 'quit') app.quit();
-      else if (msg.type === 'setClickThrough') {
-        clickThrough = !!msg.on;
-        applyFlags();
-      } else if (msg.type === 'setContentProtection' && win) {
+      else if (msg.type === 'setArrange') setArranging(!!msg.on);
+      else if (msg.type === 'setBackdropOpacity') setBackdropOpacity(msg.value);
+      else if (msg.type === 'setPreset') applyPreset(msg.name);
+      else if (msg.type === 'placeUnderCamera') placeUnderCamera();
+      else if (msg.type === 'resetLayout') resetLayout();
+      else if (msg.type === 'beginResize') beginResize(msg.edge, msg.x, msg.y);
+      else if (msg.type === 'resizeTo') resizeTo(msg.x, msg.y);
+      else if (msg.type === 'endResize') endResize();
+      else if (msg.type === 'setContentProtection' && win) {
         win.setContentProtection(!!msg.on);
       }
     });

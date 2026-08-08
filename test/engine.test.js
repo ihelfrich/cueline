@@ -509,7 +509,7 @@ section('Desktop shell');
     ['above full-screen Zoom', /'screen-saver'/],
     ['click-through', /setIgnoreMouseEvents/],
     ['global hotkeys', /globalShortcut\.register/],
-    ['never steals focus', /focusable:\s*false/],
+    ['never steals focus while presenting', /(?=[\s\S]*focusable:\s*arranging)(?=[\s\S]*setFocusable\(arranging\))/],
   ];
   const missing = powers.filter(([, re]) => !re.test(main)).map(([name]) => name);
   check('the shell keeps every power that justifies it', missing, []);
@@ -527,6 +527,35 @@ section('Desktop shell');
     /document\.documentElement\.classList\.add\('shell-root'\)/.test(html) &&
       /html\.shell-root[\s\S]*background:\s*transparent\s*!important/.test(css),
     'the root <html> canvas is still allowed to paint black'
+  );
+
+  // The shell is a single reading lens, not the browser editor with one
+  // column hidden. This is the regression behind the words appearing in a
+  // small box on the left of a much larger invisible window.
+  assert(
+    'shell gives the prompter the full native window',
+    /body\.shell-body \.main\s*{[^}]*display:\s*block[^}]*width:\s*100%[^}]*height:\s*100%/s.test(css) &&
+      /body\.shell-body \.prompter\s*{[^}]*width:\s*100%[^}]*height:\s*100%/s.test(css),
+    'the hidden browser-editor column still consumes shell geometry'
+  );
+
+  assert(
+    'shell backdrop opacity is adjustable without fading the words',
+    /--shell-backdrop:\s*0\.32/.test(css) &&
+      /setBackdropOpacity/.test(main) &&
+      /id="shell-opacity"/.test(html),
+    'the native overlay needs a persisted panel-only opacity control'
+  );
+
+  assert(
+    'Arrange mode exposes bounds, placement, presets and explicit resize handles',
+    /arranging\s*=\s*!setupComplete/.test(main) &&
+      /placeUnderCamera/.test(main) &&
+      /const PRESETS/.test(main) &&
+      /beginResize/.test(main) &&
+      (html.match(/data-edge="(?:n|e|s|w|ne|se|sw|nw)"/g) || []).length === 8 &&
+      /shell-adjusting/.test(css),
+    'a transparent frameless window must become concrete and adjustable before presenting'
   );
   // An agent app with no Dock icon and an unfocusable window cannot be quit
   // with Command-Q. If the menu bar item or the quit hotkey is ever removed,

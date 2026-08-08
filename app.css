@@ -551,6 +551,7 @@ body.shell-body .prompter-host {
 }
 html.shell-root {
   color-scheme: dark;
+  --shell-backdrop: 0.32;
 }
 body.shell-body {
   overflow: hidden;
@@ -567,20 +568,283 @@ body.shell-body .settings,
 body.shell-body .floating-note {
   display: none;
 }
+/* The browser app is a two-column editor. Hiding the editor did not remove
+   its grid track, leaving the actual prompter in a narrow cell at the left of
+   a much larger invisible native window. The shell is one surface, full stop. */
+body.shell-body .main {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
 body.shell-body .stage {
+  width: 100%;
+  height: 100%;
   padding: 0;
+}
+body.shell-body .prompter-host {
+  width: 100%;
+  height: 100%;
 }
 body.shell-body .prompter {
   border: none;
-  --panel: transparent;
+  width: 100%;
+  height: 100%;
+  --panel: rgb(0 0 0 / var(--shell-backdrop));
+  background: var(--panel) !important;
+  border-radius: 12px;
 }
-/* The window is click-through by default, so the bar would be unreachable;
-   it appears only when the mouse has been handed back with ⌃⌥I. */
+/* Lens-first typography: each sense line is centred as a unit, preserving a
+   left reading edge within the phrase without marooning the whole script at
+   the left edge of the native window. */
+body.shell-body .p-content {
+  width: 100%;
+  max-width: none !important;
+  padding-inline: clamp(28px, 7vw, 70px);
+  text-align: center !important;
+}
+body.shell-body .p-content .sense {
+  width: fit-content;
+  max-width: 100%;
+  margin-inline: auto;
+  text-align: left;
+}
+/* The desktop transport is global; duplicating it inside the overlay turns
+   Arrange into a tool museum and competes with the only controls needed there. */
 body.shell-body .p-bar {
-  opacity: 0;
+  display: none;
 }
-body.shell-body .prompter.shell-interactive .p-bar {
-  opacity: 1;
+
+/* ------------------------------------------------ desktop arrangement UI */
+
+.shell-calibrator {
+  display: none;
+}
+html.shell-root.shell-adjusting .shell-calibrator {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: block;
+  pointer-events: none;
+  color: var(--ink-1);
+  font: 500 11px/1 var(--ui);
+}
+
+.shell-frame {
+  position: absolute;
+  inset: 1px;
+  border: 1px solid color-mix(in srgb, var(--live) 78%, white 22%);
+  border-radius: 12px;
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+
+.shell-handle {
+  position: absolute;
+  display: block;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+  touch-action: none;
+  background: transparent;
+}
+.shell-handle.n,
+.shell-handle.s {
+  right: 18px;
+  left: 18px;
+  height: 13px;
+  cursor: ns-resize;
+}
+.shell-handle.e,
+.shell-handle.w {
+  top: 18px;
+  bottom: 18px;
+  width: 13px;
+  cursor: ew-resize;
+}
+.shell-handle.n { top: -6px; }
+.shell-handle.s { bottom: -6px; }
+.shell-handle.e { right: -6px; }
+.shell-handle.w { left: -6px; }
+.shell-handle.ne,
+.shell-handle.se,
+.shell-handle.sw,
+.shell-handle.nw {
+  z-index: 2;
+  width: 22px;
+  height: 22px;
+}
+.shell-handle.ne,
+.shell-handle.sw { cursor: nesw-resize; }
+.shell-handle.nw,
+.shell-handle.se { cursor: nwse-resize; }
+.shell-handle.ne { top: -7px; right: -7px; }
+.shell-handle.se { right: -7px; bottom: -7px; }
+.shell-handle.sw { bottom: -7px; left: -7px; }
+.shell-handle.nw { top: -7px; left: -7px; }
+
+/* The targets occupy every edge; these small marks are only the visible
+   affordances. This keeps resizing forgiving without drawing heavy chrome
+   around the words. */
+.shell-handle::after {
+  content: '';
+  position: absolute;
+  display: block;
+  background: var(--live);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.85);
+}
+.shell-handle.n::after,
+.shell-handle.s::after {
+  left: 50%;
+  width: 34px;
+  height: 3px;
+  margin-left: -17px;
+}
+.shell-handle.n::after { top: 5px; }
+.shell-handle.s::after { bottom: 5px; }
+.shell-handle.e::after,
+.shell-handle.w::after {
+  top: 50%;
+  width: 3px;
+  height: 34px;
+  margin-top: -17px;
+}
+.shell-handle.e::after { right: 5px; }
+.shell-handle.w::after { left: 5px; }
+.shell-handle.ne::after,
+.shell-handle.se::after,
+.shell-handle.sw::after,
+.shell-handle.nw::after {
+  width: 9px;
+  height: 9px;
+}
+.shell-handle.ne::after { top: 6px; right: 6px; }
+.shell-handle.se::after { right: 6px; bottom: 6px; }
+.shell-handle.sw::after { bottom: 6px; left: 6px; }
+.shell-handle.nw::after { top: 6px; left: 6px; }
+
+.shell-rail,
+.shell-inspector {
+  pointer-events: auto;
+  background: rgba(12, 12, 13, 0.94);
+  border: 1px solid var(--rule-2);
+  box-shadow: 0 8px 28px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(18px) saturate(0.8);
+}
+
+.shell-rail {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 32px));
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 0 5px 0 10px;
+  border-radius: 8px;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.shell-mark {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 13px;
+}
+.shell-mark i {
+  display: block;
+  height: 1px;
+  background: currentColor;
+}
+.shell-mark i:last-child { width: 8px; }
+.shell-rail-title {
+  color: var(--ink-0);
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.shell-dimensions {
+  color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+.shell-drag-copy {
+  flex: 1;
+  color: var(--ink-3);
+  text-align: center;
+}
+.shell-done,
+.shell-inspector button {
+  -webkit-app-region: no-drag;
+  border: 1px solid var(--rule-2);
+  color: var(--ink-1);
+  background: var(--bg-3);
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 5px;
+  font: inherit;
+}
+.shell-done {
+  background: var(--live);
+  border-color: var(--live);
+  color: var(--live-ink);
+  font-weight: 700;
+}
+
+.shell-inspector {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  width: min(620px, calc(100% - 28px));
+  min-height: 42px;
+  padding: 7px 8px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  -webkit-app-region: no-drag;
+}
+.shell-opacity {
+  display: grid;
+  grid-template-columns: auto minmax(70px, 1fr) 30px;
+  align-items: center;
+  gap: 7px;
+  flex: 1;
+  min-width: 150px;
+}
+.shell-opacity > span {
+  color: var(--ink-3);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-size: 9px;
+}
+.shell-opacity input {
+  width: 100%;
+  accent-color: var(--live);
+}
+.shell-opacity output {
+  color: var(--ink-1);
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.shell-presets {
+  display: inline-flex;
+  gap: 1px;
+}
+.shell-presets button.is-on {
+  color: var(--ink-0);
+  border-color: var(--ink-3);
+  background: var(--bg-4);
+}
+@media (max-width: 580px) {
+  .shell-drag-copy,
+  .shell-camera {
+    display: none;
+  }
+  .shell-inspector {
+    width: calc(100% - 24px);
+  }
 }
 
 /*
@@ -866,6 +1130,8 @@ body.pip-body .prompter {
   --lh: calc(1em * var(--line-height));
   --spent-a: 1;
   --ahead-floor: 1;
+  --fade-floor: 42px;
+  --fade-out: 6px;
   /* The last stop is pulled clear of the control bar. Without this, on a
      short window the full-brightness plateau ran underneath the opaque bar
      and a line of text was guillotined mid-glyph. */
@@ -876,8 +1142,8 @@ body.pip-body .prompter {
     rgba(0, 0, 0, var(--spent-a)) calc(var(--reading) - var(--lh) * 0.25),
     rgba(0, 0, 0, 1) calc(var(--reading) + var(--lh) * 0.1),
     rgba(0, 0, 0, 1) var(--plateau),
-    rgba(0, 0, 0, var(--ahead-floor)) calc(100% - 42px),
-    rgba(0, 0, 0, 0) calc(100% - 6px)
+    rgba(0, 0, 0, var(--ahead-floor)) calc(100% - var(--fade-floor)),
+    rgba(0, 0, 0, 0) calc(100% - var(--fade-out))
   );
   mask-image: linear-gradient(
     to bottom,
@@ -885,9 +1151,14 @@ body.pip-body .prompter {
     rgba(0, 0, 0, var(--spent-a)) calc(var(--reading) - var(--lh) * 0.25),
     rgba(0, 0, 0, 1) calc(var(--reading) + var(--lh) * 0.1),
     rgba(0, 0, 0, 1) var(--plateau),
-    rgba(0, 0, 0, var(--ahead-floor)) calc(100% - 42px),
-    rgba(0, 0, 0, 0) calc(100% - 6px)
+    rgba(0, 0, 0, var(--ahead-floor)) calc(100% - var(--fade-floor)),
+    rgba(0, 0, 0, 0) calc(100% - var(--fade-out))
   );
+}
+
+body.shell-body .p-mask {
+  --fade-floor: 10px;
+  --fade-out: 0px;
 }
 
 .prompter.dim-spent .p-mask {

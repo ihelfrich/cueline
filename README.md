@@ -215,12 +215,27 @@ cd /Users/ian/Developer/cueline/desktop && npm install && npm start
 (Use the full path. On a case-insensitive macOS filesystem, `cd desktop` from
 your home directory lands you in `~/Desktop`.)
 
-The script floats over your desktop with nothing behind it — no panel, no
-window frame. It sits under your camera, stays above full-screen Zoom, passes
-clicks through to whatever is underneath, and is excluded from screen sharing
-and screen recording at the OS level via `NSWindowSharingNone`. Which means the
-"share a window, not the whole screen" rule does not apply to it: share the
-entire screen if you like, and your audience still will not see it.
+The desktop app has two deliberately different states:
+
+- **Arrange** makes the otherwise transparent window concrete. Its amber
+  outline and eight resize targets show the exact bounds; drag the top rail to
+  move it, drag any edge or corner to resize it, choose Compact / Standard /
+  Wide, or place it directly under the camera. The Backdrop slider changes only
+  the black reading panel from completely clear to fully opaque — the type
+  stays fully opaque and crisp.
+- **Present** removes every control and border, locks the geometry, gives mouse
+  and keyboard focus back to Zoom, and passes all clicks through to whatever is
+  underneath. `⌃⌥I` switches between the two states.
+
+The first launch opens in Arrange at a focused, lens-centred size instead of
+reviving geometry from older builds. Press **Done** when the words, backdrop,
+and eye-line are right. From then on Cueline remembers the bounds and opacity.
+
+In Present, the script sits under your camera, stays above full-screen Zoom,
+passes clicks through to whatever is underneath, and is excluded from screen
+sharing and screen recording at the OS level via `NSWindowSharingNone`. Which
+means the "share a window, not the whole screen" rule does not apply to it:
+share the entire screen if you like, and your audience still will not see it.
 
 | Key | Does |
 | --- | --- |
@@ -230,21 +245,21 @@ entire screen if you like, and your audience still will not see it.
 | `⌃⌥[` `⌃⌥]` | back / forward one line |
 | `⌃⌥R` | back to the top |
 | `⌃⌥=` `⌃⌥−` | type size |
-| `⌃⌥I` | take the mouse, to move or resize it |
+| `⌃⌥I` | enter Arrange / finish arranging |
 | `⌃⌥H` | hide / show |
 | `⌃⌥Q` | quit |
 
 If it is ever stuck, `pkill -f cueline/desktop` from any terminal, or Ctrl-C in
 the terminal you started it from.
 
-On launch it shows a card with the shortcuts, including how to quit, then takes
-it away — a transparent click-through window has no affordances of its own, so
-it has to say so.
+After setup, launch shows a short shortcut card and then takes it away. The menu
+bar icon duplicates every important action, including opacity, size, camera
+placement, reset, and Quit.
 
-It has no Dock icon and never takes focus, so nothing you type ever goes to it
-by accident — which also means Command-Q has nothing to quit. It lives in the
-menu bar instead: every control is in that menu, including Quit, for when the
-hotkeys have gone out of your head thirty seconds before you go live.
+It has no Dock icon and Present never takes focus, so nothing you type goes to
+it by accident — which also means Command-Q has nothing to quit. It lives in
+the menu bar instead: every control is there for when the hotkeys have gone out
+of your head thirty seconds before you go live.
 
 `npm run dist` builds a `.dmg`. It will be unsigned, so the first launch needs
 right-click then Open; signing needs your own Apple Developer credentials.

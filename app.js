@@ -326,7 +326,8 @@ function measure() {
   const perWord = doc.totalWords && textHeight ? textHeight / doc.totalWords : 0;
   const pxPerSecond = perWord ? (S.wpm / 60) * perWord : 0;
   const lineH = S.fontSize * S.lineHeight;
-  const room = Math.max(0, vh - readingPx - 44);
+  const shellChrome = document.body.classList.contains('shell-body') ? 10 : 44;
+  const room = Math.max(0, vh - readingPx - shellChrome);
   const wanted = pxPerSecond * S.lookaheadSeconds;
   const plateau = clamp(wanted || lineH * 2.4, Math.min(lineH * 1.6, room), room);
   layout.lookaheadSeconds = pxPerSecond ? plateau / pxPerSecond : 0;
@@ -2203,8 +2204,41 @@ function initShell() {
   // The window is the float, so the button that creates one is meaningless.
   $('btn-float').hidden = true;
 
-  // Over a live desktop rather than a page, no panel is the point.
+  // The native shell owns the backdrop. The browser setting must stay clear
+  // or the two opacity systems would stack and make the slider dishonest.
   if (S.background !== 'clear') setSetting('background', 'clear');
+
+  let lastShellState = null;
+
+  const applyShellState = (state) => {
+    if (!state) return;
+    lastShellState = state;
+    const root = document.documentElement;
+    const alpha = clamp(Number(state.backdropOpacity) || 0, 0, 1);
+    root.style.setProperty('--shell-backdrop', alpha.toFixed(2));
+    root.classList.toggle('shell-adjusting', !!state.arranging);
+    prompter.classList.toggle('shell-interactive', !!state.arranging);
+
+    const calibrator = $('shell-calibrator');
+    calibrator.setAttribute('aria-hidden', String(!state.arranging));
+    $('shell-opacity').value = String(Math.round(alpha * 100));
+    $('shell-opacity-value').value = `${Math.round(alpha * 100)}%`;
+
+    if (state.bounds) {
+      $('shell-dimensions').textContent = `${state.bounds.width} × ${state.bounds.height}`;
+      document.querySelectorAll('[data-shell-preset]').forEach((button) => {
+        const preset = state.presets && state.presets[button.dataset.shellPreset];
+        const on = preset &&
+          Math.abs(state.bounds.width - preset.width) < 3 &&
+          Math.abs(state.bounds.height - preset.height) < 3;
+        button.classList.toggle('is-on', !!on);
+      });
+    }
+
+    // The host geometry changed; fit the script around the reading line while
+    // preserving the structural anchor.
+    hostRaf(relayout);
+  };
 
   const ACTIONS = {
     playPause: togglePlay,
@@ -2217,17 +2251,7 @@ function initShell() {
     restart,
     bigger: () => setSetting('fontSize', clamp(S.fontSize + 2, 20, 120)),
     smaller: () => setSetting('fontSize', clamp(S.fontSize - 2, 20, 120)),
-    clickThrough: (p) => {
-      const on = !!(p && p.on);
-      prompter.classList.toggle('shell-interactive', !on);
-      notify(
-        on
-          ? 'Click-through <b>on</b> — clicks pass through to whatever is underneath.'
-          : 'Click-through <b>off</b> — the prompter takes the mouse. <b>⌃⌥I</b> to release it.',
-        'info',
-        4000
-      );
-    },
+    shellState: applyShellState,
   };
 
   SHELL.on((msg) => {
@@ -2235,24 +2259,75 @@ function initShell() {
     if (fn) fn(msg.payload);
   });
 
-  /*
-   * A transparent, click-through, Dock-less window that never takes focus has
-   * no affordances at all: nothing to click, nothing in the switcher, no menu
-   * of its own. Without this card the only way to learn how to dismiss it is
-   * to already know. It shows once on launch and takes itself away.
-   */
-  notify(
-    '<b>Cueline is running.</b> ' +
-      '<kbd>⌃⌥Space</kbd> start · ' +
-      '<kbd>⌃⌥I</kbd> take the mouse · ' +
-      '<kbd>⌃⌥H</kbd> hide · ' +
-      '<kbd>⌃⌥Q</kbd> quit. ' +
-      'Everything is also in the menu-bar icon.',
-    'info',
-    12000
-  );
+  $('shell-done').onclick = () => SHELL.send('setArrange', { on: false });
+  $('shell-camera').onclick = () => SHELL.send('placeUnderCamera');
+  $('shell-opacity').addEventListener('input', (event) => {
+    const value = Number(event.target.value);
+    document.documentElement.style.setProperty('--shell-backdrop', (value / 100).toFixed(2));
+    $('shell-opacity-value').value = `${value}%`;
+    SHELL.send('setBackdropOpacity', { value: value / 100 });
+  });
+  document.querySelectorAll('[data-shell-preset]').forEach((button) => {
+    button.onclick = () => SHELL.send('setPreset', { name: button.dataset.shellPreset });
+  });
+
+  // Chromium does not expose dependable native hit targets for a frameless,
+  // transparent macOS window. The visible Arrange handles therefore drive a
+  // native resize gesture explicitly. Pointer capture keeps the drag alive
+  // after the cursor crosses the old window boundary.
+  const shellResize = { pointerId: null, handle: null, latest: null, frame: 0 };
+  const flushShellResize = () => {
+    shellResize.frame = 0;
+    if (!shellResize.latest) return;
+    SHELL.send('resizeTo', shellResize.latest);
+    shellResize.latest = null;
+  };
+  const finishShellResize = (event) => {
+    if (shellResize.pointerId === null || event.pointerId !== shellResize.pointerId) return;
+    if (shellResize.frame) cancelAnimationFrame(shellResize.frame);
+    shellResize.frame = 0;
+    SHELL.send('resizeTo', { x: event.screenX, y: event.screenY });
+    SHELL.send('endResize');
+    try {
+      shellResize.handle.releasePointerCapture(event.pointerId);
+    } catch {
+      /* capture may already have been released by the operating system */
+    }
+    shellResize.pointerId = null;
+    shellResize.handle = null;
+    shellResize.latest = null;
+  };
+  document.querySelectorAll('.shell-handle[data-edge]').forEach((handle) => {
+    handle.addEventListener('pointerdown', (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      shellResize.pointerId = event.pointerId;
+      shellResize.handle = handle;
+      handle.setPointerCapture(event.pointerId);
+      SHELL.send('beginResize', {
+        edge: handle.dataset.edge,
+        x: event.screenX,
+        y: event.screenY,
+      });
+    });
+  });
+  document.addEventListener('pointermove', (event) => {
+    if (event.pointerId !== shellResize.pointerId) return;
+    shellResize.latest = { x: event.screenX, y: event.screenY };
+    if (!shellResize.frame) shellResize.frame = requestAnimationFrame(flushShellResize);
+  });
+  document.addEventListener('pointerup', finishShellResize);
+  document.addEventListener('pointercancel', finishShellResize);
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape' && lastShellState && lastShellState.arranging) {
+      event.preventDefault();
+      SHELL.send('setArrange', { on: false });
+    }
+  });
 
   SHELL.info().catch(() => null).then((info) => {
+    applyShellState(info);
     if (info && info.failedHotkeys && info.failedHotkeys.length) {
       notify(
         '<b>Some shortcuts are already taken by another app:</b> ' +
@@ -2260,6 +2335,17 @@ function initShell() {
           '. They will do nothing here until that app releases them.',
         'warn',
         0
+      );
+    }
+    if (info && !info.arranging) {
+      notify(
+        '<b>Cueline is ready.</b> ' +
+          '<kbd>⌃⌥Space</kbd> start · ' +
+          '<kbd>⌃⌥I</kbd> arrange · ' +
+          '<kbd>⌃⌥H</kbd> hide · ' +
+          '<kbd>⌃⌥Q</kbd> quit.',
+        'info',
+        7000
       );
     }
   });

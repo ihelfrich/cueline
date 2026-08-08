@@ -39,7 +39,7 @@
       content="Words-per-minute pacing, live drift against a target length, and voice following that does not take the microphone from your call."
     />
     <meta name="twitter:image" content="https://ihelfrich.github.io/cueline/og.png" />
-    <link rel="stylesheet" href="app.css?v=7" />
+    <link rel="stylesheet" href="app.css?v=8" />
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Crect x='6' y='10' width='20' height='2' fill='%23efeeec'/%3E%3Crect x='6' y='15' width='20' height='2' fill='%23e9a33c'/%3E%3Crect x='6' y='20' width='13' height='2' fill='%23656563'/%3E%3C/svg%3E"
@@ -474,6 +474,43 @@
       </footer>
     </div>
 
+    <!-- =========================================== desktop arrangement -->
+    <!-- Hidden in every browser. The native shell reveals this only while
+         Arrange mode is active, turning an otherwise invisible window into a
+         concrete object that can be understood, moved, resized and tuned. -->
+    <section id="shell-calibrator" class="shell-calibrator" aria-hidden="true">
+      <div class="shell-frame" aria-hidden="true">
+        <i class="shell-handle n" data-edge="n"></i><i class="shell-handle e" data-edge="e"></i
+        ><i class="shell-handle s" data-edge="s"></i><i class="shell-handle w" data-edge="w"></i
+        ><i class="shell-handle ne" data-edge="ne"></i><i class="shell-handle se" data-edge="se"></i
+        ><i class="shell-handle sw" data-edge="sw"></i><i class="shell-handle nw" data-edge="nw"></i>
+      </div>
+
+      <header class="shell-rail">
+        <span class="shell-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="shell-rail-title">Arrange overlay</span>
+        <span id="shell-dimensions" class="shell-dimensions num">680 × 260</span>
+        <span class="shell-drag-copy">Drag rail to move · edges to resize</span>
+        <button id="shell-done" class="shell-done">Done</button>
+      </header>
+
+      <div class="shell-inspector">
+        <label class="shell-opacity">
+          <span>Backdrop</span>
+          <input id="shell-opacity" type="range" min="0" max="100" step="1" value="32" />
+          <output id="shell-opacity-value" for="shell-opacity">32%</output>
+        </label>
+
+        <div class="shell-presets" role="group" aria-label="Window size">
+          <button data-shell-preset="compact">Compact</button>
+          <button data-shell-preset="standard">Standard</button>
+          <button data-shell-preset="wide">Wide</button>
+        </div>
+
+        <button id="shell-camera" class="shell-camera">Under camera</button>
+      </div>
+    </section>
+
     <!-- ========================================================== help -->
     <div class="modal" id="help" hidden role="dialog" aria-modal="true" aria-labelledby="help-title">
       <div class="modal-card">
@@ -563,8 +600,8 @@
       </div>
     </div>
 
-    <script src="script-parse.js?v=6"></script>
-    <script src="icons.js?v=6"></script>
-    <script src="app.js?v=6"></script>
+    <script src="script-parse.js?v=8"></script>
+    <script src="icons.js?v=8"></script>
+    <script src="app.js?v=8"></script>
   </body>
 </html>
