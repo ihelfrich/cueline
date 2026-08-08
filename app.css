@@ -118,6 +118,10 @@ button {
   background: none;
   padding: 0;
 }
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
+}
 
 ::selection {
   background: var(--ink-1);
@@ -774,6 +778,7 @@ html.shell-root.shell-adjusting .shell-calibrator {
   text-align: center;
 }
 .shell-done,
+.shell-controls,
 .shell-inspector button {
   -webkit-app-region: no-drag;
   border: 1px solid var(--rule-2);
@@ -789,6 +794,9 @@ html.shell-root.shell-adjusting .shell-calibrator {
   border-color: var(--live);
   color: var(--live-ink);
   font-weight: 700;
+}
+.shell-controls {
+  color: var(--ink-2);
 }
 
 .shell-inspector {

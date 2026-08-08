@@ -16,7 +16,24 @@ const { app, BrowserWindow, screen } = require('electron');
 
 const testState = path.join(os.tmpdir(), `cueline-shell-smoke-${process.pid}`);
 const capturePath = process.env.CUELINE_SMOKE_CAPTURE || path.join(os.tmpdir(), 'cueline-shell-arrange.png');
+const controlsCapturePath = process.env.CUELINE_CONTROLS_CAPTURE || path.join(os.tmpdir(), 'cueline-control-center.png');
 app.setPath('userData', testState);
+
+// Exercise the complete local-recognition lifecycle without ever opening a
+// microphone in an automated test. The production process contract is the
+// same; only the executable is replaced by a deterministic line emitter.
+fs.mkdirSync(testState, { recursive: true });
+const fakeWhisper = path.join(testState, 'fake-whisperkit');
+fs.writeFileSync(
+  fakeWhisper,
+  `#!/usr/bin/env node
+process.on('SIGTERM', () => process.exit(0));
+process.stdout.write('Cueline follows the speaker and waits through every pause.\\n');
+setInterval(() => {}, 1000);
+`
+);
+fs.chmodSync(fakeWhisper, 0o755);
+process.env.CUELINE_WHISPERKIT = fakeWhisper;
 
 require('./main');
 
@@ -56,6 +73,34 @@ async function waitForWindow() {
   throw new Error('Cueline window did not finish loading');
 }
 
+async function waitForControlCenter() {
+  for (let i = 0; i < 100; i++) {
+    const candidate = BrowserWindow.getAllWindows().find(
+      (window) => window.getTitle() === 'Cueline Control Center'
+    );
+    if (candidate && !candidate.isDestroyed() && !candidate.webContents.isLoadingMainFrame()) {
+      await delay(180);
+      return candidate;
+    }
+    await delay(50);
+  }
+  throw new Error('Control Center did not finish loading');
+}
+
+async function info(win) {
+  return win.webContents.executeJavaScript('window.cuelineShell.info()');
+}
+
+async function waitForInfo(win, predicate, label) {
+  let current = null;
+  for (let i = 0; i < 60; i++) {
+    current = await info(win);
+    if (predicate(current)) return current;
+    await delay(50);
+  }
+  throw new Error(`${label}: ${JSON.stringify(current)}`);
+}
+
 async function send(win, type, payload = {}) {
   await win.webContents.executeJavaScript(
     `window.cuelineShell.send(${JSON.stringify(type)}, ${JSON.stringify(payload)})`
@@ -87,6 +132,9 @@ app.whenReady().then(async () => {
       return {
         shellBody: document.body.classList.contains('shell-body'),
         arranging: document.documentElement.classList.contains('shell-adjusting'),
+        rolling: document.getElementById('app').classList.contains('rolling'),
+        countdownHidden: document.getElementById('p-countdown').hidden,
+        countdownDisplay: getComputedStyle(document.getElementById('p-countdown')).display,
         main: rect(document.querySelector('.main')),
         prompt: rect(prompt),
         firstSense: firstSense ? rect(firstSense) : null,
@@ -97,6 +145,9 @@ app.whenReady().then(async () => {
 
     assert.strictEqual(surface.shellBody, true, 'renderer did not enter shell mode');
     assert.strictEqual(surface.arranging, true, 'Arrange chrome is missing on first launch');
+    assert.strictEqual(surface.rolling, false, 'overlay started rolling before a transport command');
+    assert.strictEqual(surface.countdownHidden, true, 'countdown was armed before a transport command');
+    assert.strictEqual(surface.countdownDisplay, 'none', 'hidden countdown still paints over the overlay');
     assert.strictEqual(surface.calibratorDisplay, 'block', 'Arrange bounds are not visible');
     assert(surface.main.width >= 679 && surface.prompt.width >= 679, 'prompter does not fill the native window');
     assert(surface.firstSense, 'script failed to render');
@@ -172,10 +223,49 @@ app.whenReady().then(async () => {
     );
     assert.strictEqual(stillAdjusting, false, 'Arrange chrome remains visible in Present');
 
+    await send(win, 'openControls');
+    const controls = await waitForControlCenter();
+    const controlsSurface = await controls.webContents.executeJavaScript(`(() => ({
+      heading: document.querySelector('h1')?.textContent,
+      shortcutRows: document.querySelectorAll('[data-hotkey-action]').length,
+      localDisabled: document.querySelector('[data-voice-mode="local"]').disabled,
+      privacy: document.getElementById('privacy-title')?.textContent,
+      bodyBackground: getComputedStyle(document.body).backgroundColor,
+    }))()`);
+    assert.strictEqual(controlsSurface.heading, 'Control Center', 'Control Center did not render');
+    assert.strictEqual(controlsSurface.shortcutRows, 14, 'not every global shortcut is editable');
+    assert.strictEqual(controlsSurface.localDisabled, false, 'installed local speech engine is disabled');
+    assert(/source selection/i.test(controlsSurface.privacy), 'capture boundary is not stated in Control Center');
+    assert.strictEqual(controlsSurface.bodyBackground, 'rgb(11, 11, 11)', 'Control Center surface is visually unstyled');
+    fs.writeFileSync(controlsCapturePath, (await controls.capturePage()).toPNG());
+
+    await send(win, 'setHotkey', { action: 'playPause', accelerator: 'Control+Alt+Shift+F10' });
+    let current = await info(win);
+    assert.strictEqual(current.hotkeys.playPause, 'Control+Alt+Shift+F10', 'custom shortcut was not registered');
+    await send(win, 'resetHotkeys');
+    current = await info(win);
+    assert.strictEqual(current.hotkeys.playPause, 'Control+Alt+Space', 'default shortcuts were not restored');
+
+    await send(win, 'localVoiceStart');
+    current = await waitForInfo(
+      win,
+      (next) => next.localVoice.status === 'listening',
+      'local speech subprocess did not reach listening'
+    );
+    assert.strictEqual(current.localVoice.status, 'listening', 'local speech subprocess did not reach listening');
+    await send(win, 'localVoiceStop');
+    current = await waitForInfo(
+      win,
+      (next) => next.localVoice.status === 'off',
+      'local speech subprocess did not release on Stop'
+    );
+    assert.strictEqual(current.localVoice.status, 'off', 'local speech subprocess did not release on Stop');
+
     passed = true;
     console.log(JSON.stringify({
       passed: true,
       capturePath,
+      controlsCapturePath,
       initialBounds,
       finalBounds: bounds,
       backdrop: opacity,

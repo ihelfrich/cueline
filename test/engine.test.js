@@ -561,10 +561,47 @@ section('Desktop shell');
   // An agent app with no Dock icon and an unfocusable window cannot be quit
   // with Command-Q. If the menu bar item or the quit hotkey is ever removed,
   // the app becomes unquittable without killing the process.
-  assert('there is a way to quit', /'Control\+Alt\+Q'/.test(main) && /new Tray\(/.test(main),
+  assert('there is a way to quit', /quit:\s*'Control\+Alt\+Shift\+Q'/.test(main) && /new Tray\(/.test(main),
     'a dockless, unfocusable app needs a tray item and a quit hotkey');
 
-  const files = ['main.js', 'preload.js', 'package.json', 'trayTemplate.png', 'trayTemplate@2x.png'];
+  assert(
+    'one-hand global shortcuts are editable, persisted, conflict-checked and resettable',
+    /const DEFAULT_HOTKEYS/.test(main) &&
+      /setHotkey/.test(main) &&
+      /resetHotkeys/.test(main) &&
+      /new Set\(accelerators\)/.test(main) &&
+      /hotkeys,/.test(main),
+    'the transport must not strand users with a fixed shortcut map'
+  );
+
+  assert(
+    'local word follow owns and releases an on-device WhisperKit process',
+    /whisperkit-cli/.test(main) &&
+      /spawn\(/.test(main) &&
+      /localTranscript/.test(main) &&
+      /child\.kill\('SIGTERM'\)/.test(main) &&
+      /child\.exitCode === null/.test(main),
+    'local recognition must have an explicit process lifecycle and hard-stop fallback'
+  );
+
+  assert(
+    'desktop-only Local Words is exposed without silently enabling it in a browser',
+    /data-v="local"/.test(html) &&
+      /localModeButton\.disabled = !available/.test(appSrc) &&
+      /voice-local-note/.test(appSrc),
+    'local recognition needs a truthful desktop-only affordance'
+  );
+
+  const files = [
+    'main.js',
+    'preload.js',
+    'controls.html',
+    'controls.css',
+    'controls.js',
+    'package.json',
+    'trayTemplate.png',
+    'trayTemplate@2x.png',
+  ];
   check('shell files present', files.filter((f) => !fs.existsSync(path.join(desktop, f))), []);
 }
 

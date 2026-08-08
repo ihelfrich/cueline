@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'" />
+    <meta name="color-scheme" content="dark" />
+    <title>Cueline Control Center</title>
+    <link rel="stylesheet" href="../app.css?v=10" />
+    <link rel="stylesheet" href="controls.css?v=1" />
+  </head>
+  <body class="control-body">
+    <main class="control-shell">
+      <header class="control-head">
+        <div>
+          <p class="eyebrow">Cueline desktop</p>
+          <h1>Control Center</h1>
+        </div>
+        <div class="privacy-state" title="Select one application window in Zoom; whole-display privacy is not guaranteed.">
+          <i></i>
+          Window-share private
+        </div>
+      </header>
+
+      <section class="control-section voice-card" aria-labelledby="voice-title">
+        <div class="section-head">
+          <div>
+            <p class="eyebrow">On-device intelligence</p>
+            <h2 id="voice-title">Voice follow</h2>
+          </div>
+          <div id="voice-engine-state" class="engine-state"><i></i><span>Checking engine…</span></div>
+        </div>
+
+        <p class="section-copy">
+          Local Words listens only while the prompter is running, transcribes on this Mac, and aligns
+          what you say against the script. Raw audio is never saved or sent to a provider.
+        </p>
+
+        <div class="voice-modes" role="radiogroup" aria-label="Voice follow mode">
+          <button data-voice-mode="off" role="radio">Off <small>Clock</small></button>
+          <button data-voice-mode="pace" role="radio">Pace <small>Speech gate</small></button>
+          <button data-voice-mode="local" role="radio">Local Words <small>WhisperKit</small></button>
+        </div>
+
+        <div class="voice-footer">
+          <div>
+            <b id="voice-status-title">Ready</b>
+            <span id="voice-status-copy">Choose a mode, then start when you are ready to speak.</span>
+          </div>
+          <button id="voice-toggle" class="primary">Start listening</button>
+        </div>
+
+        <div id="voice-install" class="install-note" hidden>
+          <b>Local speech engine not found.</b>
+          <span>Install once with Homebrew:</span>
+          <code>brew install whisperkit-cli</code>
+        </div>
+      </section>
+
+      <section class="control-section" aria-labelledby="keys-title">
+        <div class="section-head shortcuts-head">
+          <div>
+            <p class="eyebrow">One-hand transport cluster</p>
+            <h2 id="keys-title">Global shortcuts</h2>
+          </div>
+          <button id="reset-hotkeys" class="quiet-button">Restore defaults</button>
+        </div>
+        <p class="section-copy">
+          These work while Zoom has focus. Select a binding, then press the new combination. Cueline
+          rejects duplicates and combinations already reserved by macOS or another app.
+        </p>
+        <div id="hotkey-grid" class="hotkey-grid"></div>
+      </section>
+
+      <section class="control-section privacy-card" aria-labelledby="privacy-title">
+        <p class="eyebrow">Share boundary</p>
+        <h2 id="privacy-title">Private by source selection—not concealment</h2>
+        <p>
+          In Zoom, share the specific application window you are presenting. Cueline requests native
+          capture protection as a second layer, but current macOS display capture may ignore it. Use an
+          unshared display or companion device when whole-display privacy is mandatory.
+        </p>
+      </section>
+
+      <footer class="control-foot">
+        <span>Everything above is stored locally.</span>
+        <a href="https://github.com/ihelfrich/cueline">Source and documentation</a>
+      </footer>
+    </main>
+
+    <div id="control-toast" class="control-toast" role="status" aria-live="polite" hidden></div>
+    <script src="controls.js?v=1"></script>
+  </body>
+</html>

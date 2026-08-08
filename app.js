@@ -92,7 +92,7 @@ const DEFAULTS = {
   dimSpent: true,
   mirror: false,
   countdown: 3,
-  voiceMode: 'off', // 'off' | 'pace' | 'words'
+  voiceMode: 'off', // 'off' | 'pace' | 'local' | 'words'
   voiceLang: '',
   micDeviceId: '',
   micSensitivity: 9,
@@ -436,6 +436,16 @@ function restoreAnchor(a) {
    Transport
    ========================================================================== */
 
+function reportRendererState() {
+  const bridge = window.cuelineShell;
+  if (!bridge || !bridge.isShell) return;
+  bridge.send('rendererState', {
+    voiceMode: S.voiceMode,
+    voiceLang: S.voiceLang || navigator.language || 'en-US',
+    playing,
+  });
+}
+
 async function setPlaying(next) {
   if (next === playing) return;
   if (next && layout.maxY <= 0) return;
@@ -452,6 +462,9 @@ async function setPlaying(next) {
   if (S.voiceMode === 'words') {
     if (playing) voiceStart();
     else voiceStop();
+  } else if (S.voiceMode === 'local') {
+    if (playing) localVoiceStart();
+    else localVoiceStop();
   } else if (S.voiceMode === 'pace') {
     if (playing) vadStart();
     else vadStop();
@@ -459,6 +472,7 @@ async function setPlaying(next) {
 
   wakeBar();
   syncPlayButtons();
+  reportRendererState();
 
   if (playing && y < 2 && S.countdown > 0) {
     countingDown = true;
@@ -737,7 +751,7 @@ function updateTally() {
     P.mic.textContent = VAD.speaking ? 'Speaking' : 'Waiting';
     return;
   }
-  if (S.voiceMode === 'words') {
+  if (S.voiceMode === 'words' || S.voiceMode === 'local') {
     const st = VOICE.status;
     P.mic.hidden = !(st === 'listening' || st === 'locked' || st === 'searching');
     P.mic.dataset.state = st;
@@ -892,10 +906,17 @@ function applySettings() {
   $('s-flip').checked = S.flip;
   $('s-hideBar').checked = S.hideBar;
   segSync('s-voiceMode', S.voiceMode);
+  const localModeButton = document.querySelector('#s-voiceMode [data-v="local"]');
+  if (localModeButton) {
+    const available = !!(window.cuelineShell && window.cuelineShell.isShell);
+    localModeButton.disabled = !available;
+    localModeButton.title = available ? 'On-device WhisperKit word alignment' : 'Available in the desktop app';
+  }
   $('s-voiceLang').value = S.voiceLang || '';
   $('voice-words-note').hidden = S.voiceMode !== 'words';
   $('voice-pace-note').hidden = S.voiceMode !== 'pace';
-  $('voice-lang-row').hidden = S.voiceMode !== 'words';
+  $('voice-local-note').hidden = S.voiceMode !== 'local';
+  $('voice-lang-row').hidden = !['local', 'words'].includes(S.voiceMode);
   $('voice-mic-row').hidden = S.voiceMode !== 'pace';
   $('s-micSensitivity').value = S.micSensitivity;
 
@@ -1507,6 +1528,71 @@ function toWords(text) {
   return text.split(/\s+/).map(normalize).filter(Boolean);
 }
 
+function resetVoiceTracking() {
+  VOICE.wantOn = true;
+  VOICE.finalWords = [];
+  VOICE.interimWords = [];
+  VOICE.cursor = Math.round(currentWord());
+  VOICE.lastCursor = VOICE.cursor;
+  VOICE.lastCursorAt = performance.now();
+  VOICE.lastMatchAt = performance.now();
+  VOICE.lastSpeechAt = 0;
+  VOICE.rate = 0;
+  VOICE.target = null;
+  VOICE.consecutiveMisses = 0;
+  VOICE.restartDelay = 250;
+}
+
+/** One alignment path for browser recognition and on-device WhisperKit. */
+function trackVoiceAlignment() {
+  const match = alignVoice(voiceHeard(), VOICE.cursor, wordList);
+  if (!match) {
+    VOICE.consecutiveMisses++;
+    if (VOICE.consecutiveMisses >= 3 && performance.now() - VOICE.lastMatchAt > 4000) {
+      setVoiceStatus('searching');
+    }
+    return;
+  }
+
+  const now = performance.now();
+  const advanced = match.end - VOICE.lastCursor;
+  const dt = (now - VOICE.lastCursorAt) / 1000;
+  if (dt > 0.35 && advanced > 0 && advanced < 60) {
+    const observed = advanced / dt;
+    if (observed > 0.5 && observed < 8) {
+      VOICE.rate = VOICE.rate ? VOICE.rate * 0.7 + observed * 0.3 : observed;
+    }
+  }
+
+  VOICE.cursor = match.end;
+  VOICE.lastCursor = match.end;
+  VOICE.lastCursorAt = now;
+  VOICE.lastMatchAt = now;
+  VOICE.consecutiveMisses = 0;
+
+  const word = wordList[Math.min(match.end, wordList.length - 1)];
+  VOICE.target = yForWord(word ? word.index : 0);
+  if (VOICE.status !== 'locked') setVoiceStatus('locked');
+}
+
+function acceptVoiceTranscript(text, final = false) {
+  const words = toWords(String(text || ''));
+  if (!words.length || !VOICE.wantOn) return;
+  VOICE.lastSpeechAt = performance.now();
+  if (final) {
+    VOICE.finalWords.push(...words);
+    VOICE.interimWords = [];
+  } else {
+    // Streaming engines repeatedly revise the current utterance. Replace that
+    // tail instead of appending it or duplicated hypotheses poison alignment.
+    VOICE.interimWords = words.slice(-HEARD_KEEP);
+  }
+  if (VOICE.finalWords.length > HEARD_KEEP * 3) {
+    VOICE.finalWords = VOICE.finalWords.slice(-HEARD_KEEP * 2);
+  }
+  trackVoiceAlignment();
+}
+
 /* ---------------------------------------------------------------- status */
 
 const VOICE_COPY = {
@@ -1537,7 +1623,7 @@ function setVoiceStatus(status, message) {
 
 /** Voice owns the scroll whenever it is actually running. */
 function voiceDriving() {
-  return S.voiceMode === 'words' && VOICE.wantOn;
+  return (S.voiceMode === 'words' || S.voiceMode === 'local') && VOICE.wantOn;
 }
 
 /* -------------------------------------------------------------- lifecycle */
@@ -1551,18 +1637,7 @@ function voiceStart() {
   }
   if (VOICE.rec) return;
 
-  VOICE.wantOn = true;
-  VOICE.finalWords = [];
-  VOICE.interimWords = [];
-  VOICE.cursor = Math.round(currentWord());
-  VOICE.lastCursor = VOICE.cursor;
-  VOICE.lastCursorAt = performance.now();
-  VOICE.lastMatchAt = performance.now();
-  VOICE.lastSpeechAt = 0;
-  VOICE.rate = 0;
-  VOICE.target = null;
-  VOICE.consecutiveMisses = 0;
-  VOICE.restartDelay = 250;
+  resetVoiceTracking();
 
   const rec = new SpeechRec();
   VOICE.rec = rec;
@@ -1592,38 +1667,7 @@ function voiceStart() {
       VOICE.finalWords = VOICE.finalWords.slice(-HEARD_KEEP * 2);
     }
 
-    const match = alignVoice(voiceHeard(), VOICE.cursor, wordList);
-    if (!match) {
-      VOICE.consecutiveMisses++;
-      // Only admit we are lost after several failures and a real gap, so a
-      // single misheard phrase does not flip the UI into "searching".
-      if (VOICE.consecutiveMisses >= 3 && performance.now() - VOICE.lastMatchAt > 4000) {
-        setVoiceStatus('searching');
-      }
-      return;
-    }
-
-    const now = performance.now();
-    const advanced = match.end - VOICE.lastCursor;
-    const dt = (now - VOICE.lastCursorAt) / 1000;
-    // Measure the reader's actual pace so the predictor between confirmations
-    // moves at their speed, not the dial's.
-    if (dt > 0.35 && advanced > 0 && advanced < 60) {
-      const observed = advanced / dt;
-      if (observed > 0.5 && observed < 8) {
-        VOICE.rate = VOICE.rate ? VOICE.rate * 0.7 + observed * 0.3 : observed;
-      }
-    }
-
-    VOICE.cursor = match.end;
-    VOICE.lastCursor = match.end;
-    VOICE.lastCursorAt = now;
-    VOICE.lastMatchAt = now;
-    VOICE.consecutiveMisses = 0;
-
-    const w = wordList[Math.min(match.end, wordList.length - 1)];
-    VOICE.target = yForWord(w ? w.index : 0);
-    if (VOICE.status !== 'locked') setVoiceStatus('locked');
+    trackVoiceAlignment();
   };
 
   rec.onerror = (e) => {
@@ -1687,6 +1731,40 @@ function voiceStop() {
   }
   setVoiceStatus(SpeechRec || vadSupported() ? 'off' : 'unsupported');
   if (S.voiceMode === 'pace') listMicrophones();
+}
+
+function localVoiceStart() {
+  const bridge = window.cuelineShell;
+  if (!bridge || !bridge.isShell) {
+    setVoiceStatus('unsupported', 'Local Words is available in the Cueline desktop app.');
+    return;
+  }
+  if (VOICE.wantOn) return;
+  resetVoiceTracking();
+  setVoiceStatus('starting', 'Preparing on-device word follow…');
+  bridge.send('localVoiceStart');
+}
+
+function localVoiceStop() {
+  const bridge = window.cuelineShell;
+  if (bridge && bridge.isShell) bridge.send('localVoiceStop');
+  VOICE.wantOn = false;
+  VOICE.target = null;
+  VOICE.rate = 0;
+  setVoiceStatus('off');
+}
+
+function handleLocalVoiceStatus(payload) {
+  const status = payload && payload.status;
+  const error = payload && payload.error;
+  if (status === 'listening') setVoiceStatus('listening', 'Listening locally. Start reading and it will find you.');
+  else if (status === 'starting' || status === 'preparing') {
+    setVoiceStatus('starting', status === 'preparing' ? 'Loading the local speech model…' : 'Starting local recognition…');
+  } else if (status === 'error' || status === 'unavailable') {
+    setVoiceStatus('error', error || 'The local speech engine is unavailable.');
+  } else if (status === 'off' && S.voiceMode === 'local' && !playing) {
+    setVoiceStatus('off');
+  }
 }
 
 /** Called when the script or position changes underneath the tracker. */
@@ -2000,24 +2078,35 @@ $('s-voiceLang').addEventListener('change', (e) => {
   S.voiceLang = e.target.value;
   save();
   // A running recogniser keeps the language it started with.
-  if (VOICE.wantOn) {
+  if (VOICE.wantOn && S.voiceMode === 'words') {
     voiceStop();
     voiceStart();
+  } else if (VOICE.wantOn && S.voiceMode === 'local') {
+    localVoiceStop();
+    localVoiceStart();
   }
+  reportRendererState();
 });
 
 function setVoiceMode(mode) {
+  if (mode === 'local' && !(window.cuelineShell && window.cuelineShell.isShell)) {
+    notify('<b>Local Words runs in the desktop app.</b> The browser can still use Pace or Browser words.', 'warn', 6000);
+    mode = 'off';
+  }
+  localVoiceStop();
   S.voiceMode = mode;
   save();
   // Never leave two capture paths open at once.
   voiceStop();
   vadStop();
   if (mode === 'words' && playing) voiceStart();
+  else if (mode === 'local' && playing) localVoiceStart();
   else if (mode === 'pace' && playing) vadStart();
   else if (mode === 'off') setVoiceStatus('off');
   else setVoiceStatus('off', 'Ready. Press Listen and it will follow you.');
   if (mode === 'pace') listMicrophones();
   applySettings();
+  reportRendererState();
 }
 
 $('s-voiceMode').addEventListener('click', (e) => {
@@ -2294,6 +2383,9 @@ function initShell() {
     restart,
     bigger: () => setSetting('fontSize', clamp(S.fontSize + 2, 20, 120)),
     smaller: () => setSetting('fontSize', clamp(S.fontSize - 2, 20, 120)),
+    setVoiceMode: (payload) => payload && setVoiceMode(payload.mode),
+    localTranscript: (payload) => payload && acceptVoiceTranscript(payload.text, !!payload.final),
+    localVoiceStatus: handleLocalVoiceStatus,
     shellState: applyShellState,
   };
 
@@ -2303,6 +2395,7 @@ function initShell() {
   });
 
   $('shell-done').onclick = () => SHELL.send('setArrange', { on: false });
+  $('shell-controls').onclick = () => SHELL.send('openControls');
   $('shell-camera').onclick = () => SHELL.send('placeUnderCamera');
   $('shell-opacity').addEventListener('input', (event) => {
     const value = Number(event.target.value);
@@ -2371,6 +2464,7 @@ function initShell() {
 
   SHELL.info().catch(() => null).then((info) => {
     applyShellState(info);
+    reportRendererState();
     if (info && info.failedHotkeys && info.failedHotkeys.length) {
       notify(
         '<b>Some shortcuts are already taken by another app:</b> ' +
@@ -2399,6 +2493,7 @@ function initShell() {
    ========================================================================== */
 
 (function init() {
+  if (S.voiceMode === 'local' && !SHELL) S.voiceMode = 'off';
   if (!pipSupported()) {
     $('btn-float').title =
       'This browser cannot open an always-on-top window. Chrome, Edge, Arc and Brave can.';

@@ -130,7 +130,7 @@ focus, use the buttons on the floating window, or let voice follow drive it.
 
 ## Voice follow
 
-Two modes, because they make opposite trade-offs.
+Three modes, because they make different trade-offs.
 
 ### Pace — the default
 
@@ -181,6 +181,23 @@ Set your spoken language in Settings; accuracy falls off badly on the wrong one.
 Word mode is Chromium-only (Chrome, Edge, Arc, Brave). Pace mode works anywhere
 `getUserMedia` does, including Safari and Firefox.
 
+### Local Words — exact tracking without cloud transcription
+
+The desktop app adds the recommended word-follow path. WhisperKit transcribes
+on the Mac and feeds the same monotonic alignment engine as browser Words, so
+the script can find the phrase you are actually saying without sending audio
+to a speech provider. Audio is processed ephemerally and discarded.
+
+Install the local engine once:
+
+```bash
+brew install whisperkit-cli
+```
+
+Then open **Control Center**, choose **Local Words**, and start the prompter.
+Cueline owns the recognizer process: Stop, changing mode, or quitting closes it
+and releases the microphone.
+
 ## Tests
 
 ```bash
@@ -208,8 +225,8 @@ page is written:
 - **Global hotkeys** that work while Zoom holds the keyboard.
 
 `desktop/` is a small Electron shell that loads the *same files* as the web app
-and adds exactly those four powers, and nothing else. The prompter, the timing
-model, sense lines, voice follow and the whole interface are identical.
+and adds those native powers plus a normal, focusable Control Center. The
+prompter, timing model, sense lines, and alignment engine remain shared.
 
 ```bash
 cd /Users/ian/Developer/cueline/desktop && npm install && npm start
@@ -228,7 +245,13 @@ The desktop app has two deliberately different states:
   stays fully opaque and crisp.
 - **Present** removes every control and border, locks the geometry, gives mouse
   and keyboard focus back to Zoom, and passes all clicks through to whatever is
-  underneath. `⌃⌥I` switches between the two states.
+  underneath. `⌃⌥G` switches between the two states.
+
+Open **Control Center** from the Arrange rail, the menu-bar icon, or `⌃⌥C`. It
+shows local voice-engine status and lets you replace every global shortcut by
+pressing the combination you want. Duplicate bindings and combinations already
+claimed by macOS or another app are rejected; **Restore defaults** always
+returns to the one-hand cluster below.
 
 The first launch opens in Arrange at a focused, lens-centred size instead of
 reviving geometry from older builds. Press **Done** when the words, backdrop,
@@ -244,14 +267,15 @@ the prompter on an unshared second display or companion device.
 | Key | Does |
 | --- | --- |
 | `⌃⌥Space` | start / stop |
-| `⌃⌥↑` `⌃⌥↓` | faster / slower |
-| `⌃⌥←` `⌃⌥→` | previous / next section |
-| `⌃⌥[` `⌃⌥]` | back / forward one line |
+| `⌃⌥W` `⌃⌥S` | faster / slower |
+| `⌃⌥A` `⌃⌥D` | previous / next section |
+| `⌃⌥Q` `⌃⌥E` | back / forward one line |
 | `⌃⌥R` | back to the top |
-| `⌃⌥=` `⌃⌥−` | type size |
-| `⌃⌥I` | enter Arrange / finish arranging |
+| `⌃⌥Z` `⌃⌥X` | smaller / larger type |
+| `⌃⌥G` | enter Arrange / finish arranging |
 | `⌃⌥H` | hide / show |
-| `⌃⌥Q` | quit |
+| `⌃⌥C` | open Control Center |
+| `⌃⌥⇧Q` | quit |
 
 If it is ever stuck, `pkill -f cueline/desktop` from any terminal, or Ctrl-C in
 the terminal you started it from.

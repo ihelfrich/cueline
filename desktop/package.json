@@ -17,7 +17,15 @@
   "build": {
     "appId": "com.cueline.desktop",
     "productName": "Cueline",
-    "files": ["main.js", "preload.js", "trayTemplate.png", "trayTemplate@2x.png", "../index.html", "../app.css", "../app.js", "../icons.js", "../script-parse.js"],
-    "mac": { "category": "public.app-category.productivity", "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }] }
+    "files": ["main.js", "preload.js", "controls.html", "controls.css", "controls.js", "trayTemplate.png", "trayTemplate@2x.png", "../index.html", "../app.css", "../app.js", "../icons.js", "../script-parse.js"],
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [{ "target": "dmg", "arch": ["arm64", "x64"] }],
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Cueline listens only when you start voice follow so it can keep the script aligned with your delivery.",
+        "NSAudioCaptureUsageDescription": "Cueline can process consented session audio locally when you explicitly start a private session.",
+        "NSScreenCaptureUsageDescription": "Cueline uses macOS media selection only when you explicitly choose to process consented system audio."
+      }
+    }
   }
 }

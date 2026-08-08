@@ -39,7 +39,7 @@
       content="Words-per-minute pacing, live drift against a target length, and voice following that does not take the microphone from your call."
     />
     <meta name="twitter:image" content="https://ihelfrich.github.io/cueline/og.png" />
-    <link rel="stylesheet" href="app.css?v=9" />
+    <link rel="stylesheet" href="app.css?v=10" />
     <link
       rel="icon"
       href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' fill='%23000'/%3E%3Crect x='6' y='10' width='20' height='2' fill='%23efeeec'/%3E%3Crect x='6' y='15' width='20' height='2' fill='%23e9a33c'/%3E%3Crect x='6' y='20' width='13' height='2' fill='%23656563'/%3E%3C/svg%3E"
@@ -344,7 +344,8 @@
               <div class="seg" id="s-voiceMode" role="radiogroup" aria-label="Voice follow mode">
                 <button data-v="off">Off</button>
                 <button data-v="pace">Pace</button>
-                <button data-v="words">Words</button>
+                <button data-v="local">Local</button>
+                <button data-v="words">Browser</button>
               </div>
             </div>
 
@@ -354,8 +355,14 @@
               This mode shares the microphone properly, so it will not interrupt a call.
             </p>
 
+            <p class="hint" id="voice-local-note" hidden>
+              <b>Recommended in the desktop app.</b> WhisperKit transcribes on this Mac and aligns
+              your words against the script. Audio is processed ephemerally, never saved, and never
+              sent to a provider. Open the desktop Control Center to see engine status.
+            </p>
+
             <p class="warn" id="voice-words-note" hidden>
-              <b>Words tracks you exactly — and it will take the microphone.</b> Browser speech
+              <b>Browser words tracks you exactly — and it will take the microphone.</b> Browser speech
               recognition always opens the default input and cannot share it, so switching this on
               during a Zoom or Meet call can mute you on that call. Use it to rehearse, or only
               when the call is running on a different device. Speech is also transcribed by your
@@ -493,6 +500,7 @@
         <span class="shell-drag-copy" title="Drag this rail to move; drag any edge to resize"
           >Privacy: share one window</span
         >
+        <button id="shell-controls" class="shell-controls">Controls</button>
         <button id="shell-done" class="shell-done">Done</button>
       </header>
 
@@ -602,8 +610,8 @@
       </div>
     </div>
 
-    <script src="script-parse.js?v=9"></script>
-    <script src="icons.js?v=9"></script>
-    <script src="app.js?v=9"></script>
+    <script src="script-parse.js?v=10"></script>
+    <script src="icons.js?v=10"></script>
+    <script src="app.js?v=10"></script>
   </body>
 </html>

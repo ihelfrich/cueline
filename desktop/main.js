@@ -27,12 +27,13 @@
  */
 
 const { app, BrowserWindow, Menu, Tray, globalShortcut, ipcMain, screen, shell } = require('electron');
+const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 
 const ROOT = path.join(__dirname, '..');
 const STATE_FILE = path.join(app.getPath('userData'), 'shell.json');
-const STATE_VERSION = 3;
+const STATE_VERSION = 4;
 
 const PRESETS = Object.freeze({
   compact: { width: 520, height: 210 },
@@ -42,13 +43,57 @@ const PRESETS = Object.freeze({
 const MIN_SIZE = Object.freeze({ width: 420, height: 180 });
 const MAX_SIZE = Object.freeze({ width: 1400, height: 640 });
 
+/* A left-hand transport cluster. Control+Option stays under the little and
+ * ring fingers; the action keys mirror WASD navigation and Q/E line nudges.
+ * Every binding is editable and this exact map is always one click away. */
+const DEFAULT_HOTKEYS = Object.freeze({
+  playPause: 'Control+Alt+Space',
+  faster: 'Control+Alt+W',
+  slower: 'Control+Alt+S',
+  prevSection: 'Control+Alt+A',
+  nextSection: 'Control+Alt+D',
+  nudgeBack: 'Control+Alt+Q',
+  nudgeForward: 'Control+Alt+E',
+  restart: 'Control+Alt+R',
+  smaller: 'Control+Alt+Z',
+  bigger: 'Control+Alt+X',
+  toggleArrange: 'Control+Alt+G',
+  toggleHidden: 'Control+Alt+H',
+  openControls: 'Control+Alt+C',
+  quit: 'Control+Alt+Shift+Q',
+});
+
+const HOTKEY_LABELS = Object.freeze({
+  playPause: 'Start / stop',
+  faster: 'Faster',
+  slower: 'Slower',
+  prevSection: 'Previous section',
+  nextSection: 'Next section',
+  nudgeBack: 'Back one line',
+  nudgeForward: 'Forward one line',
+  restart: 'Back to top',
+  smaller: 'Smaller type',
+  bigger: 'Larger type',
+  toggleArrange: 'Arrange overlay',
+  toggleHidden: 'Hide / show',
+  openControls: 'Open Control Center',
+  quit: 'Quit Cueline',
+});
+
 let win = null;
+let controlsWin = null;
 let tray = null;
 let hidden = false;
 let arranging = false;
 let backdropOpacity = 0.32;
 let setupComplete = false;
 let resizeGesture = null;
+let hotkeys = { ...DEFAULT_HOTKEYS };
+let failedHotkeys = [];
+let rendererState = { voiceMode: 'off', playing: false };
+let localVoiceProcess = null;
+let localVoiceStatus = 'off';
+let localVoiceError = '';
 
 /* ------------------------------------------------------------------ state */
 
@@ -80,9 +125,17 @@ function clamp(value, lo, hi, fallback = lo) {
  *  the defect this state model replaces. */
 function restoreShellState() {
   const saved = loadState();
-  if (saved.version !== STATE_VERSION) return {};
+  if (!Number.isFinite(saved.version) || saved.version < 3) return {};
   backdropOpacity = clamp(saved.backdropOpacity, 0, 1, 0.32);
   setupComplete = !!saved.setupComplete;
+  hotkeys = Object.fromEntries(
+    Object.keys(DEFAULT_HOTKEYS).map((action) => [
+      action,
+      typeof saved.hotkeys?.[action] === 'string' && saved.hotkeys[action]
+        ? saved.hotkeys[action]
+        : DEFAULT_HOTKEYS[action],
+    ])
+  );
   return saved;
 }
 
@@ -200,10 +253,88 @@ function createWindow() {
   });
 }
 
+function openControls() {
+  if (controlsWin && !controlsWin.isDestroyed()) {
+    controlsWin.show();
+    controlsWin.focus();
+    sendShellState();
+    return;
+  }
+
+  const saved = loadState();
+  controlsWin = new BrowserWindow({
+    width: 720,
+    height: 680,
+    minWidth: 620,
+    minHeight: 560,
+    ...(saved.controlsBounds || {}),
+    title: 'Cueline Control Center',
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 15, y: 15 },
+    backgroundColor: '#0b0b0b',
+    show: false,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+    },
+  });
+  controlsWin.setContentProtection(true);
+  controlsWin.loadFile(path.join(__dirname, 'controls.html'));
+  controlsWin.once('ready-to-show', () => {
+    controlsWin.show();
+    controlsWin.focus();
+    sendShellState();
+  });
+
+  let rememberTimer = null;
+  const remember = () => {
+    clearTimeout(rememberTimer);
+    rememberTimer = setTimeout(() => {
+      if (controlsWin && !controlsWin.isDestroyed()) {
+        saveState({ version: STATE_VERSION, controlsBounds: controlsWin.getBounds() });
+      }
+    }, 180);
+  };
+  controlsWin.on('moved', remember);
+  controlsWin.on('resized', remember);
+  controlsWin.on('closed', () => {
+    clearTimeout(rememberTimer);
+    controlsWin = null;
+  });
+  controlsWin.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+}
+
 /* -------------------------------------------------------------- commands */
 
 function send(type, payload) {
   if (win && !win.isDestroyed()) win.webContents.send('cueline:shell', { type, payload });
+}
+
+function sendControls(type, payload) {
+  if (controlsWin && !controlsWin.isDestroyed()) {
+    controlsWin.webContents.send('cueline:shell', { type, payload });
+  }
+}
+
+function resolveWhisperKit() {
+  const candidates = [
+    process.env.CUELINE_WHISPERKIT,
+    '/opt/homebrew/bin/whisperkit-cli',
+    '/usr/local/bin/whisperkit-cli',
+  ].filter(Boolean);
+  return candidates.find((candidate) => {
+    try {
+      fs.accessSync(candidate, fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  }) || null;
 }
 
 function shellState() {
@@ -213,11 +344,25 @@ function shellState() {
     bounds: win && !win.isDestroyed() ? win.getBounds() : null,
     setupComplete,
     presets: PRESETS,
+    hotkeys,
+    hotkeyDefaults: DEFAULT_HOTKEYS,
+    hotkeyLabels: HOTKEY_LABELS,
+    failedHotkeys,
+    rendererState,
+    localVoice: {
+      available: !!resolveWhisperKit(),
+      engine: 'WhisperKit',
+      model: 'tiny',
+      status: localVoiceStatus,
+      error: localVoiceError,
+    },
   };
 }
 
 function sendShellState() {
-  send('shellState', shellState());
+  const state = shellState();
+  send('shellState', state);
+  sendControls('shellState', state);
 }
 
 function persistShellState() {
@@ -226,6 +371,7 @@ function persistShellState() {
     bounds: win && !win.isDestroyed() ? win.getBounds() : undefined,
     backdropOpacity,
     setupComplete,
+    hotkeys,
   });
 }
 
@@ -355,6 +501,7 @@ const COMMANDS = {
     trayRebuild();
   },
   quit: () => app.quit(),
+  openControls,
   placeUnderCamera,
   resetLayout,
   nudgeWindow: (dx, dy) => {
@@ -364,40 +511,192 @@ const COMMANDS = {
   },
 };
 
-/* Ctrl+Alt combinations: Zoom's own shortcuts on macOS are Command-based, so
-   these do not collide with mute, video or share. */
-const HOTKEYS = {
-  'Control+Alt+Space': COMMANDS.playPause,
-  'Control+Alt+Up': COMMANDS.faster,
-  'Control+Alt+Down': COMMANDS.slower,
-  'Control+Alt+Right': COMMANDS.nextSection,
-  'Control+Alt+Left': COMMANDS.prevSection,
-  'Control+Alt+[': COMMANDS.nudgeBack,
-  'Control+Alt+]': COMMANDS.nudgeForward,
-  'Control+Alt+R': COMMANDS.restart,
-  'Control+Alt+=': COMMANDS.bigger,
-  'Control+Alt+-': COMMANDS.smaller,
-  'Control+Alt+I': COMMANDS.toggleArrange,
-  'Control+Alt+H': COMMANDS.toggleHidden,
-  'Control+Alt+Q': COMMANDS.quit,
-};
-
-function registerHotkeys() {
+function registerHotkeyMap(map) {
+  globalShortcut.unregisterAll();
   const failed = [];
-  for (const [accel, fn] of Object.entries(HOTKEYS)) {
+  for (const action of Object.keys(DEFAULT_HOTKEYS)) {
+    const accel = map[action];
+    const fn = COMMANDS[action];
     let ok = false;
     try {
       ok = globalShortcut.register(accel, fn);
     } catch {
       ok = false;
     }
-    if (!ok) failed.push(accel);
+    if (!ok) failed.push({ action, accelerator: accel });
   }
   if (failed.length) {
     // Surface it rather than letting a shortcut silently do nothing on stage.
-    console.warn('[cueline] these shortcuts were already taken:', failed.join(', '));
+    console.warn(
+      '[cueline] these shortcuts were already taken:',
+      failed.map((item) => item.accelerator).join(', ')
+    );
   }
   return failed;
+}
+
+function registerHotkeys() {
+  const failed = registerHotkeyMap(hotkeys);
+  failedHotkeys = failed.map((item) => item.accelerator);
+  return failedHotkeys;
+}
+
+function applyHotkeyMap(candidate, changedAction = null) {
+  const accelerators = Object.values(candidate).map((value) => value.toLowerCase());
+  if (new Set(accelerators).size !== accelerators.length) {
+    sendControls('hotkeyResult', {
+      ok: false,
+      action: changedAction,
+      error: 'That key combination is already assigned inside Cueline.',
+    });
+    return false;
+  }
+
+  const previous = hotkeys;
+  const failed = registerHotkeyMap(candidate);
+  if (failed.length) {
+    const restoredFailures = registerHotkeyMap(previous);
+    failedHotkeys = restoredFailures.map((item) => item.accelerator);
+    sendControls('hotkeyResult', {
+      ok: false,
+      action: changedAction,
+      error: `${failed[0].accelerator} is already reserved by macOS or another app.`,
+    });
+    sendShellState();
+    return false;
+  }
+
+  hotkeys = { ...candidate };
+  failedHotkeys = [];
+  persistShellState();
+  trayRebuild();
+  sendControls('hotkeyResult', { ok: true, action: changedAction });
+  sendShellState();
+  return true;
+}
+
+function setHotkey(action, accelerator) {
+  if (!(action in DEFAULT_HOTKEYS)) return;
+  const value = String(accelerator || '').trim();
+  if (!value || !/(?:Control|Alt|Shift|Command|CmdOrCtrl)\+/i.test(value)) {
+    sendControls('hotkeyResult', {
+      ok: false,
+      action,
+      error: 'Use at least one modifier plus a letter, number, arrow, or Space.',
+    });
+    return;
+  }
+  applyHotkeyMap({ ...hotkeys, [action]: value }, action);
+}
+
+function resetHotkeys() {
+  applyHotkeyMap({ ...DEFAULT_HOTKEYS }, 'reset');
+}
+
+/* ------------------------------------------------------- local voice v2 */
+
+let localVoiceStopping = false;
+
+function setLocalVoiceStatus(status, error = '') {
+  if (localVoiceStatus === status && localVoiceError === error) return;
+  localVoiceStatus = status;
+  localVoiceError = error;
+  send('localVoiceStatus', { status, error });
+  sendShellState();
+}
+
+function startLocalVoice() {
+  if (localVoiceProcess) return;
+  const executable = resolveWhisperKit();
+  if (!executable) {
+    setLocalVoiceStatus(
+      'unavailable',
+      'WhisperKit is not installed. Open Control Center for the one-command setup.'
+    );
+    return;
+  }
+
+  localVoiceStopping = false;
+  setLocalVoiceStatus('starting');
+  const language = String(rendererState.voiceLang || 'en').split('-')[0] || 'en';
+  const child = spawn(
+    executable,
+    [
+      'transcribe',
+      '--stream',
+      '--model',
+      'tiny',
+      '--language',
+      language,
+      '--word-timestamps',
+      '--chunking-strategy',
+      'vad',
+    ],
+    {
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, TERM: 'dumb', NO_COLOR: '1' },
+    }
+  );
+  localVoiceProcess = child;
+
+  let transcriptBuffer = '';
+  const emitTranscript = (value, final = false) => {
+    const text = String(value || '').trim();
+    if (!text || /^\[|^(?:model|loading|download|audio)\b/i.test(text)) return;
+    setLocalVoiceStatus('listening');
+    send('localTranscript', { text, final });
+  };
+  child.stdout.setEncoding('utf8');
+  child.stdout.on('data', (chunk) => {
+    if (localVoiceProcess !== child) return;
+    transcriptBuffer += String(chunk)
+      .replace(/\x1b\[[0-?]*[ -\/]*[@-~]/g, '')
+      .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, '');
+    const parts = transcriptBuffer.split(/[\r\n]+/);
+    transcriptBuffer = parts.pop() || '';
+    for (const part of parts) emitTranscript(part, false);
+  });
+
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => {
+    const line = String(chunk);
+    if (/download|load|model/i.test(line) && localVoiceStatus === 'starting') {
+      setLocalVoiceStatus('preparing');
+    }
+  });
+
+  child.on('error', (error) => {
+    if (localVoiceProcess === child) localVoiceProcess = null;
+    setLocalVoiceStatus('error', error && error.message ? error.message : 'Local speech engine failed.');
+  });
+  child.on('exit', (code, signal) => {
+    // CLI output does not have to end in a newline. Preserve the final phrase
+    // before releasing the process so the reader never loses the last words
+    // of an utterance.
+    if (!localVoiceStopping) emitTranscript(transcriptBuffer, true);
+    transcriptBuffer = '';
+    if (localVoiceProcess === child) localVoiceProcess = null;
+    if (localVoiceStopping || signal === 'SIGTERM') setLocalVoiceStatus('off');
+    else if (code === 0) setLocalVoiceStatus('off');
+    else setLocalVoiceStatus('error', `Local speech engine stopped (${code ?? signal ?? 'unknown'}).`);
+    localVoiceStopping = false;
+  });
+}
+
+function stopLocalVoice() {
+  const child = localVoiceProcess;
+  if (!child) {
+    setLocalVoiceStatus('off');
+    return;
+  }
+  localVoiceStopping = true;
+  child.kill('SIGTERM');
+  setTimeout(() => {
+    // `child.killed` means that a signal was sent, not that the process has
+    // actually exited. Check exitCode so a wedged recogniser cannot hold the
+    // microphone after the user pressed Stop.
+    if (localVoiceProcess === child && child.exitCode === null) child.kill('SIGKILL');
+  }, 1200);
 }
 
 /* -------------------------------------------------------------- menu bar */
@@ -421,10 +720,12 @@ function createTray() {
   const rebuild = () => {
     tray.setContextMenu(
       Menu.buildFromTemplate([
-        { label: hidden ? 'Show prompter' : 'Hide prompter', accelerator: 'Control+Alt+H', click: COMMANDS.toggleHidden },
+        { label: 'Open Control Center…', accelerator: hotkeys.openControls, click: COMMANDS.openControls },
+        { type: 'separator' },
+        { label: hidden ? 'Show prompter' : 'Hide prompter', accelerator: hotkeys.toggleHidden, click: COMMANDS.toggleHidden },
         {
           label: arranging ? 'Done arranging' : 'Arrange overlay…',
-          accelerator: 'Control+Alt+I',
+          accelerator: hotkeys.toggleArrange,
           click: COMMANDS.toggleArrange,
         },
         {
@@ -453,8 +754,8 @@ function createTray() {
         },
         { label: 'Place under camera', click: COMMANDS.placeUnderCamera },
         { type: 'separator' },
-        { label: 'Start / stop', accelerator: 'Control+Alt+Space', click: COMMANDS.playPause },
-        { label: 'Back to top', accelerator: 'Control+Alt+R', click: COMMANDS.restart },
+        { label: 'Start / stop', accelerator: hotkeys.playPause, click: COMMANDS.playPause },
+        { label: 'Back to top', accelerator: hotkeys.restart, click: COMMANDS.restart },
         { type: 'separator' },
         { label: 'Edit the script in a browser', click: () => shell.openExternal('https://ihelfrich.github.io/cueline/') },
         { label: 'Reset layout…', click: COMMANDS.resetLayout },
@@ -462,7 +763,7 @@ function createTray() {
         { label: 'Capture protection on (best effort)', enabled: false },
         { label: 'For privacy: share one window, not the display', enabled: false },
         { type: 'separator' },
-        { label: 'Quit Cueline', accelerator: 'Control+Alt+Q', click: () => app.quit() },
+        { label: 'Quit Cueline', accelerator: hotkeys.quit, click: () => app.quit() },
       ])
     );
   };
@@ -492,13 +793,11 @@ if (!app.requestSingleInstanceLock()) {
     if (app.dock) app.dock.hide(); // an overlay has no business in the Dock
     createWindow();
     createTray();
-    const failed = registerHotkeys();
+    registerHotkeys();
 
     ipcMain.handle('cueline:shellInfo', () => ({
       isShell: true,
       ...shellState(),
-      hotkeys: HOTKEYS ? Object.keys(HOTKEYS) : [],
-      failedHotkeys: failed,
       contentProtection: true,
       captureProtectionScope: 'best-effort',
     }));
@@ -511,6 +810,22 @@ if (!app.requestSingleInstanceLock()) {
       else if (msg.type === 'setPreset') applyPreset(msg.name);
       else if (msg.type === 'placeUnderCamera') placeUnderCamera();
       else if (msg.type === 'resetLayout') resetLayout();
+      else if (msg.type === 'openControls') openControls();
+      else if (msg.type === 'setHotkey') setHotkey(msg.action, msg.accelerator);
+      else if (msg.type === 'resetHotkeys') resetHotkeys();
+      else if (msg.type === 'command' && msg.action && COMMANDS[msg.action]) COMMANDS[msg.action]();
+      else if (msg.type === 'localVoiceStart') startLocalVoice();
+      else if (msg.type === 'localVoiceStop') stopLocalVoice();
+      else if (msg.type === 'setVoiceMode') send('setVoiceMode', { mode: msg.mode });
+      else if (msg.type === 'rendererState') {
+        rendererState = {
+          ...rendererState,
+          voiceMode: typeof msg.voiceMode === 'string' ? msg.voiceMode : rendererState.voiceMode,
+          voiceLang: typeof msg.voiceLang === 'string' ? msg.voiceLang : rendererState.voiceLang,
+          playing: typeof msg.playing === 'boolean' ? msg.playing : rendererState.playing,
+        };
+        sendShellState();
+      }
       else if (msg.type === 'beginResize') beginResize(msg.edge, msg.x, msg.y);
       else if (msg.type === 'resizeTo') resizeTo(msg.x, msg.y);
       else if (msg.type === 'endResize') endResize();
@@ -524,6 +839,9 @@ if (!app.requestSingleInstanceLock()) {
     });
   });
 
-  app.on('will-quit', () => globalShortcut.unregisterAll());
+  app.on('will-quit', () => {
+    if (localVoiceProcess) localVoiceProcess.kill('SIGTERM');
+    globalShortcut.unregisterAll();
+  });
   app.on('window-all-closed', () => app.quit());
 }
