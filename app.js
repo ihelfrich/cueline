@@ -2194,6 +2194,9 @@ const SHELL = window.cuelineShell && window.cuelineShell.isShell ? window.cuelin
 function initShell() {
   if (!SHELL) return;
 
+  // The head script applies this before first paint. Repeat it here so the
+  // invariant survives alternate shell entry points and is easy to probe.
+  document.documentElement.classList.add('shell-root');
   document.body.classList.add('shell-body');
   document.getElementById('app').classList.add('is-shell');
 

@@ -541,11 +541,16 @@ code {
  * The desktop shell. Here the window really is transparent, so the page must
  * be too — all the way down. Any opaque ancestor would defeat it.
  */
+html.shell-root,
+html.shell-root body,
 body.shell-body,
 body.shell-body .app,
 body.shell-body .stage,
 body.shell-body .prompter-host {
-  background: transparent;
+  background: transparent !important;
+}
+html.shell-root {
+  color-scheme: dark;
 }
 body.shell-body {
   overflow: hidden;

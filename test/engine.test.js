@@ -498,6 +498,8 @@ section('Desktop shell');
 {
   const desktop = path.join(ROOT, 'desktop');
   const main = fs.readFileSync(path.join(desktop, 'main.js'), 'utf8');
+  const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
+  const css = fs.readFileSync(path.join(ROOT, 'app.css'), 'utf8');
 
   // The shell exists for exactly four powers a browser cannot grant. If any of
   // these calls is lost, the shell silently becomes a worse browser.
@@ -514,6 +516,18 @@ section('Desktop shell');
 
   // It must load the same app, not a fork of it.
   assert('the shell loads the web app itself', /loadFile\(path\.join\(ROOT, 'index\.html'\)/.test(main), 'shell should not carry its own copy of the prompter');
+
+  // The native window can be transparent while Chromium's root canvas is
+  // still black. Body-level transparency is therefore not enough: <html>
+  // must be marked before the stylesheet's first paint and explicitly
+  // cleared. This is the regression behind the opaque black overlay reported
+  // from the real app.
+  assert(
+    'shell transparency clears the root canvas before first paint',
+    /document\.documentElement\.classList\.add\('shell-root'\)/.test(html) &&
+      /html\.shell-root[\s\S]*background:\s*transparent\s*!important/.test(css),
+    'the root <html> canvas is still allowed to paint black'
+  );
   // An agent app with no Dock icon and an unfocusable window cannot be quit
   // with Command-Q. If the menu bar item or the quit hotkey is ever removed,
   // the app becomes unquittable without killing the process.
