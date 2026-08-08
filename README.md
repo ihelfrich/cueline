@@ -31,8 +31,9 @@ carries its own transport, and voice follow can drive the script for you.
 
 ## Screen sharing
 
-A web page cannot exclude itself from screen capture. Only a native application
-can. So:
+A web page cannot ask the operating system to exclude it from capture. A native
+application can make that request, but on current macOS it is not a guarantee.
+The reliable rule is therefore:
 
 > In Zoom, share a window or a single browser tab. Not the entire screen.
 
@@ -40,9 +41,10 @@ A window share carries only the window you nominate, so the floating prompter is
 not in it. An entire-screen share carries everything on the screen. Cueline puts
 this in front of you once, the first time you float the prompter.
 
-If you need a prompter that stays hidden even during a full-screen share, that
-requires a native macOS application using `NSWindowSharingNone`. Different
-project.
+If the prompter must never enter a whole-display capture, put it on a physical
+display or companion device that is not being shared. `NSWindowSharingNone`
+used to cover this case, but modern ScreenCaptureKit clients may capture the
+window despite that flag.
 
 ## Using it
 
@@ -200,7 +202,8 @@ page is written:
 - **A genuinely transparent window.** A browser's Picture-in-Picture window is a
   real OS window with an opaque backing store. No CSS and no API can make it
   see-through.
-- **Invisibility to screen capture**, including a full-screen share.
+- **Best-effort native capture protection.** This still helps with older
+  capture paths, but it is not a whole-display guarantee on current macOS.
 - **Click-through**, so the overlay can never take a click meant for Zoom.
 - **Global hotkeys** that work while Zoom holds the keyboard.
 
@@ -232,10 +235,11 @@ reviving geometry from older builds. Press **Done** when the words, backdrop,
 and eye-line are right. From then on Cueline remembers the bounds and opacity.
 
 In Present, the script sits under your camera, stays above full-screen Zoom,
-passes clicks through to whatever is underneath, and is excluded from screen
-sharing and screen recording at the OS level via `NSWindowSharingNone`. Which
-means the "share a window, not the whole screen" rule does not apply to it:
-share the entire screen if you like, and your audience still will not see it.
+and passes clicks through to whatever is underneath. Cueline enables Electron's
+capture-protection flag, which maps to `NSWindowSharingNone`, but Electron warns
+that modern ScreenCaptureKit clients can ignore it. Share the specific app
+window you are presenting—not the entire display. For a hard guarantee, keep
+the prompter on an unshared second display or companion device.
 
 | Key | Does |
 | --- | --- |

@@ -10,10 +10,10 @@
  *      is a real OS window with an opaque backing store, and no CSS or API
  *      can make it see-through. Here the script floats over the desktop with
  *      nothing behind it.
- *   2. Invisibility to screen capture. setContentProtection uses
- *      NSWindowSharingNone, so the prompter is excluded from screen sharing
- *      and screen recording at the OS level — including a full-screen share,
- *      which is the case a browser can never cover.
+ *   2. Best-effort capture protection. setContentProtection asks macOS not to
+ *      share the window through legacy capture paths. Electron explicitly
+ *      warns that modern ScreenCaptureKit clients may ignore that request, so
+ *      a selected-window share is the only privacy boundary we promise.
  *   3. Click-through. Mouse events pass straight to Zoom underneath, so the
  *      overlay can never steal a click or focus.
  *   4. Global hotkeys. Transport control that works while Zoom holds the
@@ -459,7 +459,8 @@ function createTray() {
         { label: 'Edit the script in a browser', click: () => shell.openExternal('https://ihelfrich.github.io/cueline/') },
         { label: 'Reset layout…', click: COMMANDS.resetLayout },
         { type: 'separator' },
-        { label: 'Hidden from screen sharing', enabled: false },
+        { label: 'Capture protection on (best effort)', enabled: false },
+        { label: 'For privacy: share one window, not the display', enabled: false },
         { type: 'separator' },
         { label: 'Quit Cueline', accelerator: 'Control+Alt+Q', click: () => app.quit() },
       ])
@@ -499,6 +500,7 @@ if (!app.requestSingleInstanceLock()) {
       hotkeys: HOTKEYS ? Object.keys(HOTKEYS) : [],
       failedHotkeys: failed,
       contentProtection: true,
+      captureProtectionScope: 'best-effort',
     }));
 
     ipcMain.on('cueline:shellAction', (_e, msg) => {

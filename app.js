@@ -58,9 +58,9 @@ whatever the type size or the width of the column.
 
 Share a window, or a single browser tab. Not the entire screen.
 
-A web page cannot exclude itself from screen capture; only a native application
-can. A window share carries only the window you nominate, so the floating
-prompter stays private. An entire-screen share carries everything on it.
+A window share carries only the window you nominate, so the floating prompter
+stays private. An entire-screen share carries everything on it. The desktop app
+requests capture protection, but current macOS capture clients may ignore it.
 
 # Voice follow
 
@@ -1192,6 +1192,10 @@ const VAD = {
   error: '',
   /** True from the moment we ask for the microphone until we stop or fail. */
   wantOn: false,
+  /** The in-flight permission/device-open operation, if any. */
+  pending: null,
+  /** Invalidates a late device-open result after Stop or a newer Start. */
+  generation: 0,
 };
 
 /** Speech continues through the gaps between words; this bridges them. */
@@ -1203,6 +1207,7 @@ function vadSupported() {
 
 async function vadStart() {
   if (VAD.stream) return true;
+  if (VAD.pending) return VAD.pending;
   VAD.wantOn = true;
   if (!vadSupported()) {
     VAD.wantOn = false;
@@ -1211,54 +1216,92 @@ async function vadStart() {
     return false;
   }
 
-  try {
-    const audio = {
-      echoCancellation: true,
-      noiseSuppression: true,
-      autoGainControl: true,
-    };
-    // A specific device is what lets the call keep the one it is already on.
-    if (S.micDeviceId) audio.deviceId = { ideal: S.micDeviceId };
+  const generation = ++VAD.generation;
+  let task = null;
+  task = (async () => {
+    let stream = null;
+    let ctx = null;
+    try {
+      const audio = {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      };
+      // A specific device is what lets the call keep the one it is already on.
+      if (S.micDeviceId) audio.deviceId = { ideal: S.micDeviceId };
 
-    VAD.stream = await navigator.mediaDevices.getUserMedia({ audio });
-    VAD.ctx = new (window.AudioContext || window.webkitAudioContext)();
-    if (VAD.ctx.state === 'suspended') await VAD.ctx.resume();
+      stream = await navigator.mediaDevices.getUserMedia({ audio });
+      if (!VAD.wantOn || generation !== VAD.generation) {
+        stream.getTracks().forEach((track) => track.stop());
+        return false;
+      }
 
-    const src = VAD.ctx.createMediaStreamSource(VAD.stream);
-    VAD.analyser = VAD.ctx.createAnalyser();
-    VAD.analyser.fftSize = 1024;
-    VAD.analyser.smoothingTimeConstant = 0.3;
-    src.connect(VAD.analyser);
-    VAD.buf = new Float32Array(VAD.analyser.fftSize);
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+      if (ctx.state === 'suspended') await ctx.resume();
+      if (!VAD.wantOn || generation !== VAD.generation) {
+        stream.getTracks().forEach((track) => track.stop());
+        await ctx.close().catch(() => {});
+        return false;
+      }
 
-    VAD.floor = -70;
-    VAD.level = -100;
-    VAD.speaking = false;
-    VAD.lastVoicedAt = 0;
-    VAD.status = 'listening';
-    VAD.error = '';
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 1024;
+      analyser.smoothingTimeConstant = 0.3;
+      src.connect(analyser);
 
-    // Device labels are only populated once permission has been granted.
-    listMicrophones();
-    setVoiceStatus('listening', 'Listening for your voice. The script moves only while you speak.');
-    return true;
-  } catch (err) {
-    VAD.stream = null;
-    VAD.wantOn = false;
-    VAD.status = 'denied';
-    VAD.error = err && err.name ? err.name : String(err);
-    setVoiceStatus(
-      'denied',
-      VAD.error === 'NotAllowedError'
-        ? 'Microphone access was refused, so pace follow is off.'
-        : 'Could not open the microphone: ' + VAD.error
-    );
-    return false;
-  }
+      // Ownership transfers only after the complete graph exists. A failure
+      // before this point is cleaned up from the local references below.
+      VAD.stream = stream;
+      VAD.ctx = ctx;
+      VAD.analyser = analyser;
+      VAD.buf = new Float32Array(analyser.fftSize);
+      VAD.floor = -70;
+      VAD.level = -100;
+      VAD.speaking = false;
+      VAD.lastVoicedAt = 0;
+      VAD.status = 'listening';
+      VAD.error = '';
+
+      // Device labels are only populated once permission has been granted.
+      listMicrophones();
+      setVoiceStatus('listening', 'Listening for your voice. The script moves only while you speak.');
+      return true;
+    } catch (err) {
+      if (stream) stream.getTracks().forEach((track) => track.stop());
+      if (ctx) await ctx.close().catch(() => {});
+      const ownedStream = VAD.stream === stream;
+      const ownedContext = VAD.ctx === ctx;
+      if (ownedStream) VAD.stream = null;
+      if (ownedContext) VAD.ctx = null;
+      if (ownedStream || ownedContext) {
+        VAD.analyser = null;
+        VAD.buf = null;
+      }
+      if (generation !== VAD.generation) return false;
+
+      VAD.wantOn = false;
+      VAD.status = 'denied';
+      VAD.error = err && err.name ? err.name : String(err);
+      setVoiceStatus(
+        'denied',
+        VAD.error === 'NotAllowedError'
+          ? 'Microphone access was refused, so pace follow is off.'
+          : 'Could not open the microphone: ' + VAD.error
+      );
+      return false;
+    } finally {
+      if (VAD.pending === task) VAD.pending = null;
+    }
+  })();
+  VAD.pending = task;
+  return task;
 }
 
 function vadStop() {
   VAD.wantOn = false;
+  VAD.generation++;
+  VAD.pending = null;
   if (VAD.stream) {
     VAD.stream.getTracks().forEach((t) => t.stop());
     VAD.stream = null;
@@ -2185,7 +2228,7 @@ window.addEventListener('beforeunload', () => {
    --------------------------------------------------------------------------
    When the same files are loaded by the Electron shell rather than a browser,
    the window itself IS the overlay: genuinely transparent, always on top,
-   click-through, and excluded from screen capture at the OS level. The page
+   click-through, and asks the OS for best-effort capture protection. The page
    drops the controls that no longer make sense and takes its transport from
    global hotkeys, which reach it even while Zoom holds the keyboard.
    ========================================================================== */

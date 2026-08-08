@@ -501,11 +501,12 @@ section('Desktop shell');
   const html = fs.readFileSync(path.join(ROOT, 'index.html'), 'utf8');
   const css = fs.readFileSync(path.join(ROOT, 'app.css'), 'utf8');
 
-  // The shell exists for exactly four powers a browser cannot grant. If any of
-  // these calls is lost, the shell silently becomes a worse browser.
+  // The shell exists for native powers a browser cannot grant. Capture
+  // protection is deliberately described as a request, not a guarantee:
+  // modern macOS ScreenCaptureKit clients may ignore NSWindowSharingNone.
   const powers = [
     ['transparent window', /transparent:\s*true/],
-    ['invisible to screen capture', /setContentProtection\(true\)/],
+    ['requests best-effort capture protection', /setContentProtection\(true\)/],
     ['above full-screen Zoom', /'screen-saver'/],
     ['click-through', /setIgnoreMouseEvents/],
     ['global hotkeys', /globalShortcut\.register/],
